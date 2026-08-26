@@ -24,7 +24,7 @@ window.Layout = (() => {
 
   function newPane(tabs = [], active = null) {
     counter += 1;
-    return { type: "pane", id: "pane" + counter, tabs: [...tabs], active, anchors: {}, zoom: 1 };
+    return { type: "pane", id: "pane" + counter, tabs: [...tabs], active, anchors: {}, modes: {}, zoom: 1 };
   }
 
   function configure(next) { hooks = next || {}; }
@@ -98,6 +98,7 @@ window.Layout = (() => {
 
     target.tabs.splice(index, 1);
     delete target.anchors[path];
+    delete target.modes[path];
 
     if (target.active === path) {
       target.active = target.tabs[Math.min(index, target.tabs.length - 1)] ?? null;
@@ -176,7 +177,8 @@ window.Layout = (() => {
     if (node.type === "pane") {
       // Zoom rides along with the pane rather than being keyed by pane id: ids are
       // regenerated on restore, so an external map would not line up again.
-      return { type: "pane", tabs: [...node.tabs], active: node.active, zoom: node.zoom ?? 1 };
+      return { type: "pane", tabs: [...node.tabs], active: node.active,
+               modes: { ...node.modes }, zoom: node.zoom ?? 1 };
     }
     return {
       type: "split",
@@ -190,6 +192,7 @@ window.Layout = (() => {
     if (!data || data.type !== "split") {
       const restored = newPane(data?.tabs ?? [], data?.active ?? null);
       restored.zoom = typeof data?.zoom === "number" ? data.zoom : 1;
+      restored.modes = data?.modes && typeof data.modes === "object" ? { ...data.modes } : {};
       return restored;
     }
     const node = {

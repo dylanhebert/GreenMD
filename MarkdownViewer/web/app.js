@@ -24,6 +24,14 @@ let dragging = null;
 
 let welcome = null;
 
+/** Most-recently-opened paths, newest first. Persisted with the session. */
+let recents = [];
+const RECENT_LIMIT = 25;
+
+function noteRecent(path) {
+  recents = [path, ...recents.filter(p => p !== path)].slice(0, RECENT_LIMIT);
+}
+
 function post(type, payload) {
   host.postMessage({ type, payload: payload ?? null });
 }
@@ -432,6 +440,21 @@ panesEl.addEventListener("drop", (event) => {
 
 // ---------- clicks inside panes ----------
 
+panesEl.addEventListener("change", (event) => {
+  const box = event.target.closest("input.task[data-task]");
+  if (!box) return;
+
+  const paneEl = box.closest(".pane");
+  const pane = paneEl ? Layout.pane(paneEl.dataset.paneId) : null;
+  if (!pane || !pane.active) return;
+
+  post("toggle-task", {
+    path: pane.active,
+    index: Number(box.dataset.task),
+    checked: box.checked
+  });
+});
+
 panesEl.addEventListener("click", (event) => {
   const paneEl = event.target.closest(".pane");
   if (!paneEl) return;
@@ -528,6 +551,7 @@ function refreshPaneChrome(pane) {
 function restoreSession(state) {
   if (!state) return;
 
+  if (Array.isArray(state.recents)) recents = state.recents.slice(0, RECENT_LIMIT);
   if (Array.isArray(state.expanded)) Workspace.setExpanded(state.expanded);
   if (state.layout) Layout.restore(state.layout);
 
@@ -546,6 +570,7 @@ function saveSession() {
     post("save-session", {
       workspace: Workspace.root(),
       expanded: Workspace.expandedPaths(),
+      recents,
       layout: Layout.serialize()
     });
   }, 400);
@@ -598,6 +623,7 @@ host.addEventListener("message", (event) => {
 
     case "doc-opened": {
       docs.set(payload.path, payload);
+      noteRecent(payload.path);
       rememberAnchors();
       Layout.addTab(Layout.activeId, payload.path);
       renderAll({ keepAnchors: false });
@@ -683,7 +709,7 @@ document.addEventListener("keydown", (event) => {
 
     case "p":
       event.preventDefault();
-      Workspace.openQuick();
+      Workspace.openQuick(recents);
       return;
 
     case "w":
@@ -811,7 +837,7 @@ Zoom.configure({
 Workspace.configure({
   onOpenFile(path) { post("open-file", path); },
   onChanged() { saveSession(); },
-  onNoWorkspace() { statusTextEl.textContent = "Open a folder first (Ctrl+K)"; }
+  onNoWorkspace() { statusTextEl.textContent = "Nothing recent yet — open a folder with Ctrl+K"; }
 });
 
 Zoom.register("outline", 13);

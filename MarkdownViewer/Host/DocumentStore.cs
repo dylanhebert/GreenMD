@@ -14,7 +14,7 @@ public sealed class Document
     public required string Path { get; init; }
     public string Title => System.IO.Path.GetFileName(Path);
 
-    /// <summary>Kept in memory even though v1 is read-only — the edit toggle needs it.</summary>
+    /// <summary>Kept in memory even while read-only, so the edit toggle is instant.</summary>
     public string RawText { get; set; } = string.Empty;
 
     public string Html { get; set; } = string.Empty;
@@ -25,6 +25,14 @@ public sealed class Document
 
     public bool Missing { get; set; }
     public DateTimeOffset LoadedAt { get; set; }
+
+    /// <summary>Recorded at load so a save reproduces the file's original form.</summary>
+    public bool HasByteOrderMark { get; set; }
+
+    /// <summary>Source offsets of each task-list marker, in document order.</summary>
+    public IReadOnlyList<int> TaskOffsets { get; set; } = [];
+
+    public string LineEnding { get; set; } = "\r\n";
 }
 
 public sealed class DocumentStore
@@ -106,11 +114,14 @@ public sealed class DocumentStore
         if (hash == document.Hash && document.Html.Length > 0) return;
 
         document.Hash = hash;
+        document.HasByteOrderMark = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
         document.RawText = Decode(bytes);
+        document.LineEnding = DetectLineEnding(document.RawText);
 
         var rendered = MarkdownRenderer.Render(document.RawText, Path.GetDirectoryName(document.Path));
         document.Html = rendered.Html;
         document.Outline = rendered.Outline;
+        document.TaskOffsets = rendered.TaskOffsets;
     }
 
     /// <summary>
@@ -143,6 +154,68 @@ public sealed class DocumentStore
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Writes the document back, reproducing the original encoding and line endings.
+    /// Rewriting a CRLF file as LF would show up in git as a change to every line,
+    /// which is a rude thing for a viewer to do to somebody's repository.
+    /// Returns false when the file changed on disk since it was loaded, unless
+    /// <paramref name="force"/> is set — the caller is expected to ask first.
+    /// </summary>
+    public async Task<(bool Saved, bool Conflict)> SaveAsync(string path, string text, bool force)
+    {
+        var document = Get(path);
+        if (document is null) return (false, false);
+
+        if (!force)
+        {
+            var onDisk = await ReadWithRetryAsync(document.Path).ConfigureAwait(false);
+            if (onDisk is not null && Convert.ToHexString(SHA256.HashData(onDisk)) != document.Hash)
+                return (false, true);
+        }
+
+        var normalized = text.Replace("\r\n", "\n");
+        if (document.LineEnding == "\r\n") normalized = normalized.Replace("\n", "\r\n");
+
+        var encoding = new UTF8Encoding(document.HasByteOrderMark);
+        var bytes = encoding.GetPreamble().Concat(encoding.GetBytes(normalized)).ToArray();
+
+        try
+        {
+            // Temp file plus rename: a crash mid-write must not truncate the user's file.
+            var temporary = document.Path + ".mdvtmp";
+            await File.WriteAllBytesAsync(temporary, bytes).ConfigureAwait(false);
+            File.Move(temporary, document.Path, overwrite: true);
+        }
+        catch (IOException) { return (false, false); }
+        catch (UnauthorizedAccessException) { return (false, false); }
+
+        document.RawText = normalized;
+        document.Hash = Convert.ToHexString(SHA256.HashData(bytes));
+        document.LoadedAt = DateTimeOffset.Now;
+
+        var rendered = MarkdownRenderer.Render(normalized, Path.GetDirectoryName(document.Path));
+        document.Html = rendered.Html;
+        document.Outline = rendered.Outline;
+        document.TaskOffsets = rendered.TaskOffsets;
+
+        return (true, false);
+    }
+
+    /// <summary>Whichever ending dominates wins; mixed files are rare and CRLF is the safe default.</summary>
+    private static string DetectLineEnding(string text)
+    {
+        var crlf = 0;
+        var lf = 0;
+
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] != '\n') continue;
+            if (i > 0 && text[i - 1] == '\r') crlf++; else lf++;
+        }
+
+        return lf > crlf ? "\n" : "\r\n";
     }
 
     /// <summary>BOM if present, UTF-8 otherwise — which is what agent-written files are.</summary>

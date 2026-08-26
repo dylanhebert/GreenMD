@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.RegularExpressions;
 using Markdig;
 using Markdig.Renderers;
+using Markdig.Extensions.TaskLists;
 using Markdig.Renderers.Html;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
@@ -10,7 +11,12 @@ namespace MarkdownViewer.Host;
 
 public sealed record Heading(int Level, string Text, string Id);
 
-public sealed record RenderedDoc(string Html, IReadOnlyList<Heading> Outline);
+/// <summary>
+/// <paramref name="TaskOffsets"/> holds the source offset of each task-list marker, in
+/// document order, so a checkbox clicked in the rendered view can be flipped in the
+/// markdown itself. The offset points at the opening bracket of <c>[ ]</c>.
+/// </summary>
+public sealed record RenderedDoc(string Html, IReadOnlyList<Heading> Outline, IReadOnlyList<int> TaskOffsets);
 
 /// <summary>
 /// Markdown to HTML, plus the heading outline. Both come from a single parse:
@@ -40,13 +46,51 @@ public static partial class MarkdownRenderer
             .Where(h => h.Id.Length > 0 && h.Text.Length > 0)
             .ToList();
 
+        // Number the task-list markers in document order. The index is what the UI
+        // sends back when a checkbox is clicked, and the offset is where to edit.
+        var tasks = document.Descendants<TaskList>().ToList();
+        var indexes = new Dictionary<TaskList, int>();
+        for (var i = 0; i < tasks.Count; i++) indexes[tasks[i]] = i;
+
         using var writer = new StringWriter();
         var renderer = new HtmlRenderer(writer);
         Pipeline.Setup(renderer);
+
+        // Markdig renders task checkboxes disabled. Swap in a live one so a doc full
+        // of checkboxes is something you can actually tick off.
+        renderer.ObjectRenderers.Replace<HtmlTaskListRenderer>(new InteractiveTaskListRenderer(indexes));
+
         renderer.Render(document);
         writer.Flush();
 
-        return new RenderedDoc(Sanitize(writer.ToString()), outline);
+        return new RenderedDoc(
+            Sanitize(writer.ToString()),
+            outline,
+            tasks.Select(task => task.Span.Start).ToList());
+    }
+
+    private sealed class InteractiveTaskListRenderer(Dictionary<TaskList, int> indexes)
+        : HtmlObjectRenderer<TaskList>
+    {
+        protected override void Write(HtmlRenderer renderer, TaskList task)
+        {
+            renderer.Write("<input class=\"task\" type=\"checkbox\"");
+            if (indexes.TryGetValue(task, out var index)) renderer.Write($" data-task=\"{index}\"");
+            if (task.Checked) renderer.Write(" checked=\"checked\"");
+            renderer.Write(" />");
+        }
+    }
+
+    /// <summary>
+    /// Flips one task marker in the source text. Returns null when the offset no longer
+    /// looks like a checkbox, which means the document moved on since it was rendered.
+    /// </summary>
+    public static string? ToggleTask(string markdown, int offset, bool check)
+    {
+        if (offset < 0 || offset + 2 >= markdown.Length) return null;
+        if (markdown[offset] != '[' || markdown[offset + 2] != ']') return null;
+
+        return markdown.Remove(offset + 1, 1).Insert(offset + 1, check ? "x" : " ");
     }
 
     /// <summary>

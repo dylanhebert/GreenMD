@@ -144,6 +144,18 @@ public partial class MainWindow : Window
                 Post("workspace", new { closed = true });
                 break;
 
+            case "get-text":
+                if (payload.ValueKind == JsonValueKind.String) SendText(payload.GetString()!);
+                break;
+
+            case "save-doc":
+                if (payload.ValueKind == JsonValueKind.Object) await SaveAsync(payload);
+                break;
+
+            case "toggle-task":
+                if (payload.ValueKind == JsonValueKind.Object) await ToggleTaskAsync(payload);
+                break;
+
             case "set-title":
                 UpdateTitle(payload.ValueKind == JsonValueKind.String ? payload.GetString() : null);
                 break;
@@ -240,6 +252,89 @@ public partial class MainWindow : Window
         var document = await _documents.LoadAsync(full);
         _watcher.Watch(full);
         return document;
+    }
+
+    // ---------- editing ----------
+
+    /// <summary>
+    /// Hands the raw markdown to the editor. Sent on request rather than with every
+    /// document, so the common read-only path does not carry the source as well as
+    /// the rendered HTML.
+    /// </summary>
+    private void SendText(string path)
+    {
+        var document = _documents.Get(path);
+        if (document is null || document.Missing) return;
+
+        Post("doc-text", new { path = document.Path, text = document.RawText });
+    }
+
+    private async Task SaveAsync(JsonElement request)
+    {
+        if (!request.TryGetProperty("path", out var pathElement)
+            || !request.TryGetProperty("text", out var textElement)
+            || pathElement.GetString() is not { Length: > 0 } path
+            || textElement.GetString() is not { } text)
+        {
+            return;
+        }
+
+        var force = request.TryGetProperty("force", out var forceElement)
+                    && forceElement.ValueKind == JsonValueKind.True;
+
+        var (saved, conflict) = await _documents.SaveAsync(path, text, force);
+
+        Post("save-result", new { path, saved, conflict });
+
+        if (!saved) return;
+
+        var document = _documents.Get(path);
+        if (document is not null) Post("doc-updated", Describe(document));
+    }
+
+    /// <summary>
+    /// Ticking a checkbox in the rendered view edits the markdown itself. The UI sends
+    /// the checkbox's index; the offset recorded at render time says where to edit.
+    /// </summary>
+    private async Task ToggleTaskAsync(JsonElement request)
+    {
+        if (!request.TryGetProperty("path", out var pathElement)
+            || !request.TryGetProperty("index", out var indexElement)
+            || pathElement.GetString() is not { Length: > 0 } path
+            || !indexElement.TryGetInt32(out var index))
+        {
+            return;
+        }
+
+        var check = request.TryGetProperty("checked", out var checkedElement)
+                    && checkedElement.ValueKind == JsonValueKind.True;
+
+        var document = _documents.Get(path);
+        if (document is null || index < 0 || index >= document.TaskOffsets.Count) return;
+
+        var updated = MarkdownRenderer.ToggleTask(document.RawText, document.TaskOffsets[index], check);
+        if (updated is null)
+        {
+            Post("error", new { message = "That checkbox has moved — reload the file and try again." });
+            return;
+        }
+
+        var (saved, conflict) = await _documents.SaveAsync(path, updated, force: false);
+
+        if (conflict)
+        {
+            Post("error", new { message = $"{Path.GetFileName(path)} changed on disk; not overwriting." });
+            return;
+        }
+
+        if (!saved)
+        {
+            Post("error", new { message = $"Could not write to {Path.GetFileName(path)}." });
+            return;
+        }
+
+        var refreshed = _documents.Get(path);
+        if (refreshed is not null) Post("doc-updated", Describe(refreshed));
     }
 
     /// <summary>

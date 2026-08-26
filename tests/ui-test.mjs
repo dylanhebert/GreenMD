@@ -63,7 +63,7 @@ window.navigator.clipboard = { writeText: async () => {} };
 // jsdom implements no layout, so these are absent. The app only uses them for effect.
 window.Element.prototype.scrollIntoView = function () {};
 
-for (const file of ["highlight.js", "zoom.js", "layout.js", "workspace.js", "find.js", "app.js"]) {
+for (const file of ["highlight.js", "zoom.js", "layout.js", "workspace.js", "find.js", "editor.js", "app.js"]) {
   try {
     window.eval(readFileSync(WEB + file, "utf8"));
   } catch (e) {
@@ -278,6 +278,17 @@ check("doc-content did not add a tab", $$(".pane .tab").length === tabsBefore,
 check("doc-content painted the restored pane",
       $$(".pane .doc h1").some(h => h.textContent === "Gamma"));
 
+// --- recent files feed quick-open when there is no workspace ---
+send("workspace", { closed: true });
+check("sidebar hides when the workspace closes", $("#sidebar").hidden === true);
+
+window.eval("Workspace.openQuick(['C:" + SEP + SEP + "docs" + SEP + SEP + "alpha.md'])");
+check("quick open falls back to recents", $("#quickOpen").hidden === false);
+check("recent entry shows its file name",
+      $("#quickList .quick-name")?.textContent === "alpha.md",
+      $("#quickList .quick-name")?.textContent);
+window.eval("Workspace.closeQuick()");
+
 // --- find in page ---
 function key(k, options = {}) {
   window.document.dispatchEvent(new window.KeyboardEvent("keydown",
@@ -384,6 +395,35 @@ check("scroll-spy marks the heading the reader is under",
 await spyAt(1200);
 check("scroll-spy follows further scrolling",
       $("#outline a.current")?.textContent === "Third", $("#outline a.current")?.textContent);
+
+// --- task list checkboxes write back to the file ---
+send("doc-opened", {
+  path: "C:" + SEP + "docs" + SEP + "todo.md",
+  title: "todo.md",
+  folder: "C:" + SEP + "docs",
+  html: '<ul><li><input class="task" type="checkbox" data-task="0" />first</li>' +
+        '<li><input class="task" type="checkbox" data-task="1" checked="checked" />second</li></ul>',
+  outline: [],
+  missing: false,
+  loadedAt: new Date().toISOString()
+});
+
+const boxes = $$(".pane .doc input.task");
+check("checkboxes render enabled", boxes.length === 2 && !boxes[0].disabled,
+      `${boxes.length} boxes, disabled=${boxes[0]?.disabled}`);
+
+const beforeToggle = posted.filter(m => m.type === "toggle-task").length;
+boxes[0].checked = true;
+boxes[0].dispatchEvent(new window.Event("change", { bubbles: true }));
+
+const toggle = posted.filter(m => m.type === "toggle-task").pop();
+check("ticking a box asks the host to edit the file",
+      posted.filter(m => m.type === "toggle-task").length === beforeToggle + 1);
+check("toggle carries the index and state",
+      toggle?.payload?.index === 0 && toggle?.payload?.checked === true,
+      JSON.stringify(toggle?.payload));
+check("toggle targets the right document",
+      toggle?.payload?.path?.endsWith("todo.md"), toggle?.payload?.path);
 
 // --- report ---
 console.log("");

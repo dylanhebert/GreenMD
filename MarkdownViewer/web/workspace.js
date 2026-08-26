@@ -23,6 +23,7 @@ window.Workspace = (() => {
 
   let quickMatches = [];
   let quickIndex = 0;
+  let quickSource = null;   // null = the workspace; otherwise an explicit file list
 
   function configure(next) {
     hooks = next || {};
@@ -185,9 +186,19 @@ window.Workspace = (() => {
     return total - text.length * 0.01;
   }
 
-  function openQuick() {
-    if (!data) { if (hooks.onNoWorkspace) hooks.onNoWorkspace(); return; }
+  /**
+   * Opens the picker over the workspace, or over `fallback` (recent files) when no
+   * workspace is bound. Ctrl+P is worth having even before a folder is opened.
+   */
+  function openQuick(fallback) {
+    quickSource = data ? null : (fallback && fallback.length ? fallback : null);
 
+    if (!data && !quickSource) {
+      if (hooks.onNoWorkspace) hooks.onNoWorkspace();
+      return;
+    }
+
+    quickInputEl.placeholder = data ? "Go to file" : "Recent files";
     quickEl.hidden = false;
     quickInputEl.value = "";
     quickIndex = 0;
@@ -205,9 +216,15 @@ window.Workspace = (() => {
 
   function renderQuick() {
     const query = quickInputEl.value.trim();
-    const rootLength = data.root.length + 1;
 
-    quickMatches = files()
+    // Without a workspace root there is no common prefix to strip, so recent files
+    // are matched and shown against their full path.
+    const entries = quickSource
+      ? quickSource.map(path => ({ path, name: path.split(/[\\/]/).pop() }))
+      : files();
+    const rootLength = quickSource ? 0 : data.root.length + 1;
+
+    quickMatches = entries
       .map(entry => ({ entry, relative: entry.path.slice(rootLength) }))
       .map(item => ({ ...item, rank: query ? score(item.relative, query) : 0 }))
       .filter(item => item.rank >= 0)
