@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none';
+               script-src 'self';
+               style-src 'self' 'unsafe-inline';
+               img-src 'self' data: https://mdviewer.app https://mdasset.local;
+               font-src 'self';
+               connect-src 'none';
+               form-action 'none';
+               base-uri 'none'" />
+<title>MarkdownViewer</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main id="doc" class="doc" tabindex="-1"></main>
+  <aside id="outline" class="outline" aria-label="Document outline"></aside>
+  <script src="/highlight.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
