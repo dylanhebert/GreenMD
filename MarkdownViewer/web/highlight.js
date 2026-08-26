@@ -14,7 +14,7 @@
  * them produces confetti. No label means no highlighting.
  */
 
-const HL = (() => {
+window.HL = (() => {
 
   // Rule regex sources must use non-capturing groups only -- the tokenizer maps
   // match groups back to rules positionally, so a stray capture shifts everything.

@@ -15,6 +15,8 @@ public partial class MainWindow : Window
     private readonly DocumentStore _documents = new();
     private readonly FileWatchService _watcher = new();
     private readonly AssetServer _assets = new();
+    private readonly WorkspaceService _workspace = new();
+    private readonly SessionStore _session = new();
 
     private readonly string? _initialPath;
     private bool _uiReady;
@@ -26,11 +28,24 @@ public partial class MainWindow : Window
         Native.UseDarkTitleBar(this);
 
         AllowDrop = true;
+
+        // WebView2 would otherwise consume file drops itself and hand the page File
+        // objects with no usable path. Letting WPF handle them keeps the real path,
+        // which is what the watcher needs.
+        Web.AllowExternalDrop = false;
+
         Drop += OnDrop;
         DragOver += OnDragOver;
-        Closed += (_, _) => _watcher.Dispose();
+
+        Closed += (_, _) =>
+        {
+            _session.Flush();
+            _watcher.Dispose();
+            _workspace.Dispose();
+        };
 
         _watcher.Changed += OnFileChanged;
+        _workspace.TreeChanged += OnWorkspaceTreeChanged;
         Loaded += OnLoadedAsync;
     }
 
@@ -56,7 +71,7 @@ public partial class MainWindow : Window
         core.Settings.IsSwipeNavigationEnabled = false;
 
         // Ctrl+wheel and Ctrl+/- must not zoom the whole shell -- each pane owns its
-        // own text scale, handled in app.js. Turning this off leaves the wheel event
+        // own text scale, handled in the UI. Turning this off leaves the wheel event
         // itself intact for the UI to interpret.
         core.Settings.IsZoomControlEnabled = false;
 
@@ -89,14 +104,7 @@ public partial class MainWindow : Window
         {
             case "ready":
                 _uiReady = true;
-                if (!string.IsNullOrWhiteSpace(_initialPath)) await OpenAsync(_initialPath);
-                else Post("welcome", RenderWelcome());
-                PostAssociationState();
-                break;
-
-            case "register-association":
-                FileAssociation.Register();
-                PostAssociationState();
+                await StartUpAsync();
                 break;
 
             case "open-file":
@@ -104,9 +112,13 @@ public partial class MainWindow : Window
                     await OpenAsync(payload.GetString()!);
                 break;
 
-            case "close-doc":
-                if (payload.ValueKind == JsonValueKind.String)
-                    CloseDocument(payload.GetString()!);
+            case "load-docs":
+                if (payload.ValueKind == JsonValueKind.Array)
+                    await LoadDocumentsAsync(payload);
+                break;
+
+            case "sync-open":
+                if (payload.ValueKind == JsonValueKind.Array) SyncOpenDocuments(payload);
                 break;
 
             case "open-external":
@@ -117,23 +129,104 @@ public partial class MainWindow : Window
             case "pick-file":
                 await PickFileAsync();
                 break;
+
+            case "pick-folder":
+                PickFolder();
+                break;
+
+            case "open-workspace":
+                if (payload.ValueKind == JsonValueKind.String)
+                    OpenWorkspace(payload.GetString()!);
+                break;
+
+            case "close-workspace":
+                _workspace.Close();
+                Post("workspace", new { closed = true });
+                break;
+
+            case "set-title":
+                UpdateTitle(payload.ValueKind == JsonValueKind.String ? payload.GetString() : null);
+                break;
+
+            case "save-session":
+                if (payload.ValueKind == JsonValueKind.Object) _session.Save(payload);
+                break;
+
+            case "register-association":
+                FileAssociation.Register();
+                PostAssociationState();
+                break;
         }
     }
 
-    // ---------- opening and closing ----------
+    /// <summary>
+    /// Restores the previous session, then applies whatever this launch asked for on
+    /// top. A file passed on the command line always wins and ends up focused.
+    /// </summary>
+    private async Task StartUpAsync()
+    {
+        PostAssociationState();
+
+        var saved = _session.Load();
+
+        if (saved is not null)
+        {
+            if (saved.Value.TryGetProperty("workspace", out var workspaceRoot)
+                && workspaceRoot.GetString() is { Length: > 0 } root
+                && Directory.Exists(root))
+            {
+                _workspace.Open(root);
+                _assets.AllowRoot(root);
+                PostWorkspaceTree();
+            }
+
+            Post("session", saved.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(_initialPath))
+        {
+            await OpenAsync(_initialPath);
+        }
+        else if (saved is null)
+        {
+            Post("welcome", RenderWelcome());
+        }
+    }
+
+    // ---------- opening documents ----------
 
     private async Task OpenAsync(string path)
     {
+        var document = await LoadAsync(path);
+        if (document is null) return;
+
+        Post("doc-opened", Describe(document));
+    }
+
+    /// <summary>Loads without placing a tab — used when restoring a saved layout.</summary>
+    private async Task LoadDocumentsAsync(JsonElement paths)
+    {
+        foreach (var element in paths.EnumerateArray())
+        {
+            if (element.GetString() is not { Length: > 0 } path) continue;
+
+            var document = await LoadAsync(path);
+            if (document is not null) Post("doc-content", Describe(document));
+        }
+    }
+
+    private async Task<Document?> LoadAsync(string path)
+    {
         string full;
         try { full = DocumentStore.Normalize(path); }
-        catch (ArgumentException) { return; }
-        catch (NotSupportedException) { return; }
-        catch (PathTooLongException) { return; }
+        catch (ArgumentException) { return null; }
+        catch (NotSupportedException) { return null; }
+        catch (PathTooLongException) { return null; }
 
         if (!File.Exists(full))
         {
             Post("error", new { message = $"Not found: {full}" });
-            return;
+            return null;
         }
 
         var directory = Path.GetDirectoryName(full);
@@ -146,16 +239,66 @@ public partial class MainWindow : Window
 
         var document = await _documents.LoadAsync(full);
         _watcher.Watch(full);
-
-        Post("doc-opened", Describe(document));
-        UpdateTitle(document.Title);
+        return document;
     }
 
-    private void CloseDocument(string path)
+    /// <summary>
+    /// Drops watchers for documents the UI no longer has open anywhere. The UI sends
+    /// the whole open set rather than individual closes, because the same file can be
+    /// open in several panes and only the UI knows when the last one went away.
+    /// </summary>
+    private void SyncOpenDocuments(JsonElement openPaths)
     {
-        _watcher.Unwatch(path);
-        _documents.Remove(path);
+        var stillOpen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var element in openPaths.EnumerateArray())
+        {
+            if (element.GetString() is { Length: > 0 } path) stillOpen.Add(path);
+        }
+
+        foreach (var path in _documents.OpenPaths)
+        {
+            if (stillOpen.Contains(path)) continue;
+            _watcher.Unwatch(path);
+            _documents.Remove(path);
+        }
     }
+
+    // ---------- workspaces ----------
+
+    private void OpenWorkspace(string root)
+    {
+        if (!Directory.Exists(root)) return;
+
+        _workspace.Open(root);
+        _assets.AllowRoot(root);
+        PostWorkspaceTree();
+    }
+
+    private void PostWorkspaceTree()
+    {
+        var tree = _workspace.Scan();
+        if (tree is null) { Post("workspace", new { closed = true }); return; }
+
+        Post("workspace", new
+        {
+            root = tree.Root,
+            name = tree.Name,
+            truncated = tree.Truncated,
+            entries = tree.Entries.Select(entry => new
+            {
+                path = entry.Path,
+                name = entry.Name,
+                parent = entry.Parent,
+                dir = entry.IsDirectory
+            })
+        });
+    }
+
+    private void OnWorkspaceTreeChanged() =>
+        _ = Dispatcher.InvokeAsync(() => { if (_uiReady) PostWorkspaceTree(); });
+
+    // ---------- dialogs ----------
 
     private async Task PickFileAsync()
     {
@@ -169,6 +312,12 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog(this) != true) return;
 
         foreach (var file in dialog.FileNames) await OpenAsync(file);
+    }
+
+    private void PickFolder()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Open a folder as a workspace" };
+        if (dialog.ShowDialog(this) == true) OpenWorkspace(dialog.FolderName);
     }
 
     /// <summary>Called when a second launch hands a path to this window.</summary>
@@ -211,12 +360,12 @@ public partial class MainWindow : Window
 
     private async void OnDrop(object sender, DragEventArgs e)
     {
-        if (e.Data.GetData(DataFormats.FileDrop) is not string[] files) return;
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths) return;
 
-        foreach (var file in files)
+        foreach (var path in paths)
         {
-            if (Directory.Exists(file)) continue;   // folders arrive with workspaces in M3
-            await OpenAsync(file);
+            if (Directory.Exists(path)) OpenWorkspace(path);
+            else await OpenAsync(path);
         }
     }
 
@@ -239,6 +388,12 @@ public partial class MainWindow : Window
         return new { html = rendered.Html, outline = rendered.Outline };
     }
 
+    private void PostAssociationState() => Post("association", new
+    {
+        registered = FileAssociation.IsRegistered(),
+        exe = FileAssociation.ExecutablePath
+    });
+
     private void UpdateTitle(string? documentTitle) =>
         Title = string.IsNullOrEmpty(documentTitle) ? "MarkdownViewer" : $"{documentTitle} — MarkdownViewer";
 
@@ -254,12 +409,6 @@ public partial class MainWindow : Window
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { }
     }
 
-    private void PostAssociationState() => Post("association", new
-    {
-        registered = FileAssociation.IsRegistered(),
-        exe = FileAssociation.ExecutablePath
-    });
-
     private void Post(string type, object payload) =>
         Web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type, payload }, JsonOptions));
 
@@ -268,11 +417,13 @@ public partial class MainWindow : Window
 
         No document open.
 
-        - **Ctrl+O** to open a file
-        - Drag a `.md` file onto the window
-        - Or pass one on the command line
+        - **Ctrl+O** opens a file
+        - **Ctrl+K** opens a folder as a workspace
+        - **Ctrl+P** jumps to a file once a workspace is open
+        - **Ctrl+\\** splits the pane, **Ctrl+Shift+\\** splits it downwards
+        - Drag a file or folder onto the window
 
-        Files reload automatically when something changes them on disk, and your
-        place in the document is kept.
+        Files reload automatically when something changes them on disk, and your place
+        in the document is kept.
         """;
 }

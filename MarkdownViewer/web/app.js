@@ -2,181 +2,30 @@
 
 const host = window.chrome && window.chrome.webview;
 
-const tabstripEl = document.getElementById("tabstrip");
-const docEl = document.getElementById("doc");
-const outlineEl = document.getElementById("outline");
-const docNameEl = document.getElementById("docName");
-const docFolderEl = document.getElementById("docFolder");
-const docUpdatedEl = document.getElementById("docUpdated");
+const panesEl = document.getElementById("panes");
 const pulseEl = document.getElementById("pulse");
 const statusTextEl = document.getElementById("statusText");
 const statusRightEl = document.getElementById("statusRight");
 const assocButtonEl = document.getElementById("assocButton");
+const outlineEl = document.getElementById("outline");
+const outlineTitleEl = document.getElementById("outlineTitle");
+const openFolderEl = document.getElementById("openFolder");
+const closeWorkspaceEl = document.getElementById("closeWorkspace");
 
-/** path -> { path, title, folder, html, outline, missing, loadedAt, anchor } */
-const tabs = new Map();
-let order = [];
-let activePath = null;
+/** path -> { path, title, folder, html, outline, missing, loadedAt } */
+const docs = new Map();
+
+/** Set while a tab is being dragged; dataTransfer alone is awkward to read on dragover. */
+let dragging = null;
+
+let welcome = null;
 
 function post(type, payload) {
   host.postMessage({ type, payload: payload ?? null });
 }
 
-// ---------- per-pane text zoom ----------
-//
-// WebView2's own zoom is disabled by the host. Scaling font-size rather than using a
-// transform is deliberate: the text has to reflow so the reader actually gets more or
-// fewer words per line, which a transform would not do.
+// ---------- helpers ----------
 
-const ZOOM_MIN = 0.6;
-const ZOOM_MAX = 2.6;
-const ZOOM_STEP = 0.1;
-const ZOOM_BASE = { doc: 15, outline: 13 };
-
-const zoomLevels = new Map();
-let hoveredScope = null;
-
-function scopeElement(name) {
-  return document.querySelector(`[data-zoom-scope="${name}"]`);
-}
-
-function applyZoom(name) {
-  const scope = scopeElement(name);
-  if (!scope) return;
-
-  const factor = zoomLevels.get(name) ?? 1;
-  const target = scope.querySelector("[data-zoom-target]");
-  if (target) target.style.fontSize = (ZOOM_BASE[name] * factor).toFixed(2) + "px";
-
-  const badge = scope.querySelector("[data-zoom-badge]");
-  if (badge) {
-    badge.textContent = Math.round(factor * 100) + "%";
-    badge.classList.toggle("shown", Math.abs(factor - 1) > 0.001);
-  }
-}
-
-function setZoom(name, factor) {
-  const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(factor * 100) / 100));
-
-  // Reflowing moves the reader; hold their place across the change.
-  const anchor = name === "doc" ? captureAnchor() : null;
-  zoomLevels.set(name, clamped);
-  applyZoom(name);
-  if (anchor) restoreAnchor(anchor);
-}
-
-function nudgeZoom(name, direction) {
-  setZoom(name, (zoomLevels.get(name) ?? 1) + direction * ZOOM_STEP);
-}
-
-document.addEventListener("mouseover", (event) => {
-  const scope = event.target.closest("[data-zoom-scope]");
-  if (scope) hoveredScope = scope.dataset.zoomScope;
-});
-
-document.addEventListener("wheel", (event) => {
-  if (!event.ctrlKey) return;
-
-  const scope = event.target.closest("[data-zoom-scope]");
-  if (!scope) return;
-
-  event.preventDefault();
-  nudgeZoom(scope.dataset.zoomScope, event.deltaY < 0 ? 1 : -1);
-}, { passive: false });
-
-assocButtonEl.addEventListener("click", () => {
-  post("register-association");
-  setStatus("Registered. Windows will ask you to confirm the default the next time you open a .md file.", "", false);
-});
-
-for (const badge of document.querySelectorAll("[data-zoom-badge]")) {
-  badge.addEventListener("click", () => {
-    const scope = badge.closest("[data-zoom-scope]");
-    if (scope) setZoom(scope.dataset.zoomScope, 1);
-  });
-}
-
-// ---------- scroll anchoring ----------
-
-/**
- * Records where the reader is by nearest heading rather than raw scrollTop.
- * A rewrite above the viewport shifts every pixel offset, but the heading they
- * were sitting under is almost always still there.
- */
-function captureAnchor() {
-  const top = docEl.scrollTop;
-  const atBottom = docEl.scrollHeight - top - docEl.clientHeight < 48;
-
-  let id = null;
-  let delta = top;
-
-  for (const heading of docEl.querySelectorAll("h1[id],h2[id],h3[id],h4[id],h5[id],h6[id]")) {
-    if (heading.offsetTop > top + 8) break;
-    id = heading.id;
-    delta = top - heading.offsetTop;
-  }
-
-  return { id, delta, atBottom };
-}
-
-function restoreAnchor(anchor) {
-  if (!anchor) { docEl.scrollTop = 0; return; }
-
-  // Follow mode: sitting at the bottom edge means watching the file grow.
-  if (anchor.atBottom) { docEl.scrollTop = docEl.scrollHeight; return; }
-
-  if (anchor.id) {
-    const target = docEl.querySelector(`[id="${CSS.escape(anchor.id)}"]`);
-    if (target) { docEl.scrollTop = Math.max(0, target.offsetTop + anchor.delta); return; }
-  }
-
-  docEl.scrollTop = anchor.delta;
-}
-
-// ---------- rendering ----------
-
-function renderOutline(headings) {
-  outlineEl.replaceChildren();
-  for (const heading of headings || []) {
-    if (heading.level > 4) continue;
-    const link = document.createElement("a");
-    link.href = "#" + heading.id;
-    link.dataset.level = String(heading.level);
-    link.textContent = heading.text;
-    link.title = heading.text;
-    outlineEl.append(link);
-  }
-}
-
-function addCopyButtons(root) {
-  for (const pre of root.querySelectorAll("pre")) {
-    const button = document.createElement("button");
-    button.className = "copy";
-    button.type = "button";
-    button.textContent = "Copy";
-    button.addEventListener("click", async () => {
-      const code = pre.querySelector("code");
-      try {
-        await navigator.clipboard.writeText(code ? code.textContent : pre.textContent);
-        button.textContent = "Copied";
-      } catch {
-        button.textContent = "Failed";
-      }
-      setTimeout(() => { button.textContent = "Copy"; }, 1200);
-    });
-    pre.append(button);
-  }
-}
-
-function paint(html, outline, anchor) {
-  docEl.innerHTML = html;
-  HL.highlightAll(docEl);
-  addCopyButtons(docEl);
-  renderOutline(outline);
-  restoreAnchor(anchor);
-}
-
-/** Shows the tail of a path -- the deepest folders are the ones that identify it. */
 function shortFolder(folder) {
   if (!folder) return "";
   const parts = folder.split(/[\\/]/).filter(Boolean);
@@ -201,66 +50,135 @@ function relativeTime(iso) {
   return new Date(then).toLocaleDateString();
 }
 
-function updateHeader() {
-  const tab = activePath ? tabs.get(activePath) : null;
+function docElementOf(pane) {
+  return panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"] .doc`);
+}
 
-  if (!tab) {
-    docNameEl.textContent = "";
-    docFolderEl.textContent = "";
-    docFolderEl.removeAttribute("title");
-    docUpdatedEl.textContent = "";
+// ---------- scroll anchoring ----------
+
+function captureAnchor(scroller) {
+  if (!scroller) return null;
+
+  const top = scroller.scrollTop;
+  const atBottom = scroller.scrollHeight - top - scroller.clientHeight < 48;
+
+  let id = null;
+  let delta = top;
+
+  for (const heading of scroller.querySelectorAll("h1[id],h2[id],h3[id],h4[id],h5[id],h6[id]")) {
+    if (heading.offsetTop > top + 8) break;
+    id = heading.id;
+    delta = top - heading.offsetTop;
+  }
+
+  return { id, delta, atBottom };
+}
+
+function restoreAnchor(scroller, anchor) {
+  if (!scroller) return;
+  if (!anchor) { scroller.scrollTop = 0; return; }
+
+  // Follow mode: sitting at the bottom means watching the file grow.
+  if (anchor.atBottom) { scroller.scrollTop = scroller.scrollHeight; return; }
+
+  if (anchor.id) {
+    const target = scroller.querySelector(`[id="${CSS.escape(anchor.id)}"]`);
+    if (target) { scroller.scrollTop = Math.max(0, target.offsetTop + anchor.delta); return; }
+  }
+
+  scroller.scrollTop = anchor.delta;
+}
+
+function rememberAnchors() {
+  for (const pane of Layout.panes()) {
+    if (!pane.active) continue;
+    const scroller = docElementOf(pane);
+    if (scroller) pane.anchors[pane.active] = captureAnchor(scroller);
+  }
+}
+
+// ---------- content painting ----------
+
+function addCopyButtons(root) {
+  for (const pre of root.querySelectorAll("pre")) {
+    const button = document.createElement("button");
+    button.className = "copy";
+    button.type = "button";
+    button.textContent = "Copy";
+    button.addEventListener("click", async () => {
+      const code = pre.querySelector("code");
+      try {
+        await navigator.clipboard.writeText(code ? code.textContent : pre.textContent);
+        button.textContent = "Copied";
+      } catch {
+        button.textContent = "Failed";
+      }
+      setTimeout(() => { button.textContent = "Copy"; }, 1200);
+    });
+    pre.append(button);
+  }
+}
+
+function paintDoc(pane) {
+  const scroller = docElementOf(pane);
+  if (!scroller) return;
+
+  const doc = pane.active ? docs.get(pane.active) : null;
+
+  if (!doc) {
+    // Only the very first pane shows the welcome text; a new empty split stays blank.
+    const isOnly = Layout.panes().length === 1;
+    scroller.innerHTML = isOnly && welcome ? welcome.html : "";
+    scroller.scrollTop = 0;
     return;
   }
 
-  docNameEl.textContent = tab.title;
-  docFolderEl.textContent = shortFolder(tab.folder);
-  docFolderEl.title = tab.folder || "";
-  docUpdatedEl.textContent = tab.loadedAt ? "updated " + relativeTime(tab.loadedAt) : "";
+  scroller.innerHTML = doc.html;
+  HL.highlightAll(scroller);
+  addCopyButtons(scroller);
+  restoreAnchor(scroller, pane.anchors[pane.active]);
 }
 
-setInterval(updateHeader, 5000);
+function buildTabstrip(pane, element) {
+  const strip = document.createElement("div");
+  strip.className = "tabstrip";
 
-function setStatus(text, right, flash) {
-  statusTextEl.textContent = text || "";
-  statusRightEl.textContent = right || "";
-
-  if (!flash) return;
-
-  pulseEl.classList.remove("live");
-  void pulseEl.offsetWidth;                 // restart the animation
-  pulseEl.classList.add("live");
-
-  docUpdatedEl.classList.add("flash");
-  setTimeout(() => docUpdatedEl.classList.remove("flash"), 1600);
-}
-
-function renderTabs() {
-  tabstripEl.replaceChildren();
-
-  for (const path of order) {
-    const tab = tabs.get(path);
-    if (!tab) continue;
-
-    const element = document.createElement("div");
-    element.className = "tab" + (path === activePath ? " active" : "") + (tab.missing ? " missing" : "");
-    element.dataset.path = path;
-    element.setAttribute("role", "tab");
-    element.title = path;
+  for (const path of pane.tabs) {
+    const doc = docs.get(path);
+    const tab = document.createElement("div");
+    tab.className = "tab"
+      + (path === pane.active ? " active" : "")
+      + (doc && doc.missing ? " missing" : "");
+    tab.dataset.path = path;
+    tab.draggable = true;
+    tab.title = path;
 
     const label = document.createElement("span");
     label.className = "tab-label";
-    label.textContent = tab.title;
-    element.append(label);
+    label.textContent = doc ? doc.title : path.split(/[\\/]/).pop();
+    tab.append(label);
 
     const close = document.createElement("button");
     close.className = "tab-close";
     close.type = "button";
     close.textContent = "×";
     close.dataset.close = path;
-    close.setAttribute("aria-label", "Close " + tab.title);
-    element.append(close);
+    close.setAttribute("aria-label", "Close");
+    tab.append(close);
 
-    tabstripEl.append(element);
+    tab.addEventListener("dragstart", event => {
+      dragging = { paneId: pane.id, path };
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", path);
+      tab.classList.add("dragging");
+    });
+    tab.addEventListener("dragend", () => {
+      dragging = null;
+      tab.classList.remove("dragging");
+      clearDropHints();
+    });
+
+    strip.append(tab);
   }
 
   const add = document.createElement("button");
@@ -268,148 +186,241 @@ function renderTabs() {
   add.type = "button";
   add.textContent = "+";
   add.title = "Open a file (Ctrl+O)";
-  add.addEventListener("click", () => post("pick-file"));
-  tabstripEl.append(add);
+  add.addEventListener("click", () => { Layout.setActive(pane.id); post("pick-file"); });
+  strip.append(add);
 
-  tabstripEl.style.display = order.length ? "flex" : "none";
+  element.append(strip);
 }
 
-function activate(path) {
-  if (activePath && activePath !== path && tabs.has(activePath)) {
-    tabs.get(activePath).anchor = captureAnchor();
+function buildHeader(pane, element) {
+  const doc = pane.active ? docs.get(pane.active) : null;
+
+  const header = document.createElement("header");
+  header.className = "dochead";
+
+  const id = document.createElement("div");
+  id.className = "dochead-id";
+
+  const name = document.createElement("span");
+  name.className = "dochead-name";
+  name.textContent = doc ? doc.title : "";
+
+  const folder = document.createElement("span");
+  folder.className = "dochead-folder";
+  if (doc) {
+    folder.textContent = shortFolder(doc.folder);
+    folder.title = doc.folder || "";
   }
 
-  const tab = tabs.get(path);
-  if (!tab) return;
+  id.append(name, folder);
 
-  activePath = path;
-  document.title = tab.title;
-  paint(tab.html, tab.outline, tab.anchor);
-  renderTabs();
-  updateHeader();
-  setStatus(tab.missing ? "File is missing from disk" : tab.path, "", false);
+  const meta = document.createElement("div");
+  meta.className = "dochead-meta";
+
+  const updated = document.createElement("span");
+  updated.className = "dochead-updated";
+  updated.dataset.updated = doc ? doc.loadedAt : "";
+  updated.textContent = doc && doc.loadedAt ? "updated " + relativeTime(doc.loadedAt) : "";
+
+  const badge = document.createElement("button");
+  badge.className = "zoom-badge";
+  badge.type = "button";
+  badge.setAttribute("data-zoom-badge", "");
+  badge.title = "Reset text size to 100%";
+
+  meta.append(updated, badge);
+  header.append(id, meta);
+  element.append(header);
 }
 
-function closeTab(path) {
-  if (!tabs.has(path)) return;
+/** Called by Layout for each pane after the skeleton is rebuilt. */
+function renderPane(pane, element) {
+  buildTabstrip(pane, element);
+  buildHeader(pane, element);
 
-  const index = order.indexOf(path);
-  tabs.delete(path);
-  order = order.filter(p => p !== path);
-  post("close-doc", path);
+  const scroller = document.createElement("main");
+  scroller.className = "doc";
+  scroller.tabIndex = -1;
+  scroller.setAttribute("data-zoom-target", "");
+  element.append(scroller);
 
-  if (activePath !== path) { renderTabs(); return; }
+  const hint = document.createElement("div");
+  hint.className = "drop-hint";
+  element.append(hint);
 
-  if (order.length === 0) {
-    activePath = null;
-    document.title = "MarkdownViewer";
-    paint("", [], null);
-    renderTabs();
-    updateHeader();
-    setStatus("No document open", "Ctrl+O to open", false);
-    return;
-  }
+  Zoom.register("pane:" + pane.id, 15, pane.zoom ?? 1);
+  Zoom.apply("pane:" + pane.id);
 
-  activate(order[Math.min(index, order.length - 1)]);
+  paintDoc(pane);
 }
 
-// ---------- messages from the host ----------
+function renderAll({ keepAnchors = true, save = true } = {}) {
+  if (keepAnchors) rememberAnchors();
+  Layout.render();
+  refreshOutline();
+  refreshStatus();
 
-host.addEventListener("message", (event) => {
-  const { type, payload } = event.data;
+  const pane = Layout.activePane();
+  Workspace.highlight(pane && pane.active ? pane.active : null);
 
-  if (type === "welcome") {
-    paint(payload.html, payload.outline, null);
-    renderTabs();
-    updateHeader();
-    setStatus("No document open", "Ctrl+O to open", false);
-    return;
+  const active = pane && pane.active ? docs.get(pane.active) : null;
+  post("set-title", active ? active.title : null);
+
+  if (save) saveSession();
+}
+
+// ---------- outline ----------
+
+function refreshOutline() {
+  const pane = Layout.activePane();
+  const doc = pane && pane.active ? docs.get(pane.active) : null;
+
+  outlineTitleEl.textContent = doc ? "Outline" : "Outline";
+  outlineEl.replaceChildren();
+
+  for (const heading of (doc ? doc.outline : []) || []) {
+    if (heading.level > 4) continue;
+    const link = document.createElement("a");
+    link.href = "#" + heading.id;
+    link.dataset.level = String(heading.level);
+    link.textContent = heading.text;
+    link.title = heading.text;
+    outlineEl.append(link);
   }
+}
 
-  if (type === "association") {
-    // Only offered while unregistered -- once it is done there is nothing to click.
-    assocButtonEl.hidden = payload.registered;
-    assocButtonEl.title = payload.exe;
-    return;
-  }
+outlineEl.addEventListener("click", (event) => {
+  const link = event.target.closest("a");
+  if (!link) return;
+  event.preventDefault();
 
-  if (type === "downloading") {
-    setStatus("Downloading " + payload.title + " from OneDrive…", "", false);
-    return;
-  }
+  const pane = Layout.activePane();
+  const scroller = pane ? docElementOf(pane) : null;
+  if (!scroller) return;
 
-  if (type === "error") {
-    setStatus(payload.message, "", false);
-    return;
-  }
-
-  if (type === "doc-opened") {
-    const existing = tabs.get(payload.path);
-    tabs.set(payload.path, { ...payload, anchor: existing ? existing.anchor : null });
-    if (!order.includes(payload.path)) order.push(payload.path);
-    activate(payload.path);
-    return;
-  }
-
-  if (type === "doc-updated") {
-    const existing = tabs.get(payload.path);
-    if (!existing) return;
-
-    tabs.set(payload.path, { ...payload, anchor: existing.anchor });
-
-    if (payload.path !== activePath) {
-      renderTabs();
-      const tab = tabstripEl.querySelector(`[data-path="${CSS.escape(payload.path)}"]`);
-      if (tab) {
-        tab.classList.add("changed");
-        setTimeout(() => tab.classList.remove("changed"), 2500);
-      }
-      return;
-    }
-
-    const anchor = captureAnchor();
-    paint(payload.html, payload.outline, anchor);
-    tabs.get(payload.path).anchor = anchor;
-    updateHeader();
-    setStatus(payload.missing ? "File is missing from disk" : payload.path, "", true);
-  }
+  const target = scroller.querySelector(`[id="${CSS.escape(decodeURIComponent(link.hash.slice(1)))}"]`);
+  if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
 });
 
-// ---------- input ----------
+// ---------- status ----------
 
-tabstripEl.addEventListener("click", (event) => {
+function refreshStatus(flash) {
+  const pane = Layout.activePane();
+  const doc = pane && pane.active ? docs.get(pane.active) : null;
+
+  statusTextEl.textContent = doc
+    ? (doc.missing ? "File is missing from disk" : doc.path)
+    : "No document open";
+
+  const paneCount = Layout.panes().length;
+  statusRightEl.textContent = paneCount > 1 ? `${paneCount} panes` : "";
+
+  if (!flash) return;
+
+  pulseEl.classList.remove("live");
+  void pulseEl.offsetWidth;
+  pulseEl.classList.add("live");
+}
+
+/** Ticks the "updated 4s ago" stamps without rebuilding any panes. */
+setInterval(() => {
+  for (const element of panesEl.querySelectorAll(".dochead-updated")) {
+    const iso = element.dataset.updated;
+    element.textContent = iso ? "updated " + relativeTime(iso) : "";
+  }
+}, 5000);
+
+// ---------- drag and drop between panes ----------
+
+function clearDropHints() {
+  for (const pane of panesEl.querySelectorAll(".pane")) {
+    pane.classList.remove("drop-center", "drop-left", "drop-right", "drop-top", "drop-bottom");
+  }
+}
+
+panesEl.addEventListener("dragover", (event) => {
+  if (!dragging) return;
+
+  const paneEl = event.target.closest(".pane");
+  if (!paneEl) return;
+
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+
+  const zone = Layout.dropZone(paneEl, event);
+  clearDropHints();
+  paneEl.classList.add("drop-" + zone);
+});
+
+panesEl.addEventListener("dragleave", (event) => {
+  if (!event.relatedTarget || !panesEl.contains(event.relatedTarget)) clearDropHints();
+});
+
+panesEl.addEventListener("drop", (event) => {
+  if (!dragging) return;
+
+  const paneEl = event.target.closest(".pane");
+  if (!paneEl) return;
+
+  event.preventDefault();
+
+  const zone = Layout.dropZone(paneEl, event);
+  const { paneId, path } = dragging;
+  dragging = null;
+  clearDropHints();
+
+  // Dropping a pane's only tab back onto itself is a no-op, not a split.
+  if (paneId === paneEl.dataset.paneId && zone === "center") return;
+
+  rememberAnchors();
+  Layout.applyDrop(paneId, path, paneEl.dataset.paneId, zone);
+  renderAll({ keepAnchors: false });
+  syncOpenPaths();
+});
+
+// ---------- clicks inside panes ----------
+
+panesEl.addEventListener("click", (event) => {
+  const paneEl = event.target.closest(".pane");
+  if (!paneEl) return;
+  const paneId = paneEl.dataset.paneId;
+
   const close = event.target.closest("[data-close]");
-  if (close) { event.stopPropagation(); closeTab(close.dataset.close); return; }
+  if (close) {
+    event.stopPropagation();
+    rememberAnchors();
+    Layout.closeTab(paneId, close.dataset.close);
+    renderAll({ keepAnchors: false });
+    syncOpenPaths();
+    return;
+  }
 
   const tab = event.target.closest("[data-path]");
-  if (tab) activate(tab.dataset.path);
-});
+  if (tab) {
+    rememberAnchors();
+    const pane = Layout.pane(paneId);
+    if (pane) { pane.active = tab.dataset.path; Layout.setActive(paneId); }
+    renderAll({ keepAnchors: false });
+    return;
+  }
 
-// Middle-click closes, same as a browser.
-tabstripEl.addEventListener("auxclick", (event) => {
-  if (event.button !== 1) return;
-  const tab = event.target.closest("[data-path]");
-  if (tab) { event.preventDefault(); closeTab(tab.dataset.path); }
-});
-
-docEl.addEventListener("click", (event) => {
-  const link = event.target.closest("a[href]");
+  const link = event.target.closest(".doc a[href]");
   if (!link) return;
 
   const href = link.getAttribute("href");
 
   if (href.startsWith("#")) {
     event.preventDefault();
-    const target = docEl.querySelector(`[id="${CSS.escape(decodeURIComponent(href.slice(1)))}"]`);
+    const scroller = paneEl.querySelector(".doc");
+    const target = scroller?.querySelector(`[id="${CSS.escape(decodeURIComponent(href.slice(1)))}"]`);
     if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
   }
 
-  // Links to other local files become tabs rather than navigating the shell away.
   if (href.startsWith("https://mdopen.local/")) {
     event.preventDefault();
-    const encoded = href.slice("https://mdopen.local/".length).split("#")[0];
-    post("open-file", decodeURIComponent(encoded));
+    Layout.setActive(paneId);
+    post("open-file", decodeURIComponent(href.slice("https://mdopen.local/".length).split("#")[0]));
     return;
   }
 
@@ -419,38 +430,284 @@ docEl.addEventListener("click", (event) => {
   }
 });
 
-outlineEl.addEventListener("click", (event) => {
-  const link = event.target.closest("a");
-  if (!link) return;
+panesEl.addEventListener("auxclick", (event) => {
+  if (event.button !== 1) return;
+  const tab = event.target.closest("[data-path]");
+  const paneEl = event.target.closest(".pane");
+  if (!tab || !paneEl) return;
+
   event.preventDefault();
-  const target = docEl.querySelector(`[id="${CSS.escape(decodeURIComponent(link.hash.slice(1)))}"]`);
-  if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+  rememberAnchors();
+  Layout.closeTab(paneEl.dataset.paneId, tab.dataset.path);
+  renderAll({ keepAnchors: false });
+  syncOpenPaths();
 });
+
+// ---------- host messages ----------
+
+function syncOpenPaths() {
+  post("sync-open", Layout.openPaths());
+}
+
+/** Rebuilds one pane's tab strip and header without touching its scroll position. */
+function refreshPaneChrome(pane) {
+  const element = panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"]`);
+  if (!element) return;
+
+  element.querySelector(".tabstrip")?.remove();
+  element.querySelector(".dochead")?.remove();
+
+  const scroller = element.querySelector(".doc");
+  buildTabstrip(pane, element);
+  buildHeader(pane, element);
+
+  // Both were appended at the end; put them back above the document.
+  if (scroller) element.insertBefore(scroller, null);
+  Zoom.apply("pane:" + pane.id);
+}
+
+function restoreSession(state) {
+  if (!state) return;
+
+  if (Array.isArray(state.expanded)) Workspace.setExpanded(state.expanded);
+  if (state.layout) Layout.restore(state.layout);
+
+  renderAll({ keepAnchors: false, save: false });
+
+  const paths = Layout.openPaths();
+  if (paths.length) post("load-docs", paths);
+}
+
+let sessionTimer = null;
+
+/** Debounced -- a burst of tab operations should not be a burst of messages. */
+function saveSession() {
+  clearTimeout(sessionTimer);
+  sessionTimer = setTimeout(() => {
+    post("save-session", {
+      workspace: Workspace.root(),
+      expanded: Workspace.expandedPaths(),
+      layout: Layout.serialize()
+    });
+  }, 400);
+}
+
+host.addEventListener("message", (event) => {
+  const { type, payload } = event.data;
+
+  switch (type) {
+    case "welcome":
+      welcome = payload;
+      renderAll();
+      break;
+
+    case "workspace":
+      Workspace.set(payload);
+      refreshStatus();
+      saveSession();
+      break;
+
+    case "session":
+      restoreSession(payload);
+      break;
+
+    case "doc-content": {
+      // Content for a restored tab: fill it in without creating a new tab.
+      docs.set(payload.path, payload);
+      for (const pane of Layout.panesShowing(payload.path)) {
+        if (pane.active === payload.path) paintDoc(pane);
+        refreshPaneChrome(pane);
+      }
+      refreshOutline();
+      refreshStatus();
+      break;
+    }
+
+    case "association":
+      assocButtonEl.hidden = payload.registered;
+      assocButtonEl.title = payload.exe;
+      break;
+
+    case "downloading":
+      statusTextEl.textContent = "Downloading " + payload.title + " from OneDrive…";
+      break;
+
+    case "error":
+      statusTextEl.textContent = payload.message;
+      break;
+
+    case "doc-opened": {
+      docs.set(payload.path, payload);
+      rememberAnchors();
+      Layout.addTab(Layout.activeId, payload.path);
+      renderAll({ keepAnchors: false });
+      syncOpenPaths();
+      break;
+    }
+
+    case "doc-updated": {
+      docs.set(payload.path, payload);
+
+      // Repaint only the panes showing this file, so an update in one pane never
+      // disturbs the reader's position in another.
+      for (const pane of Layout.panesShowing(payload.path)) {
+        if (pane.active !== payload.path) continue;
+
+        const scroller = docElementOf(pane);
+        if (scroller) pane.anchors[payload.path] = captureAnchor(scroller);
+        paintDoc(pane);
+
+        const paneEl = panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"]`);
+        const updated = paneEl?.querySelector(".dochead-updated");
+        if (updated) {
+          updated.dataset.updated = payload.loadedAt;
+          updated.textContent = "updated " + relativeTime(payload.loadedAt);
+          updated.classList.add("flash");
+          setTimeout(() => updated.classList.remove("flash"), 1600);
+        }
+      }
+
+      // Tabs that are not the active one just get a dot.
+      for (const pane of Layout.panesShowing(payload.path)) {
+        if (pane.active === payload.path) continue;
+        const tab = panesEl.querySelector(
+          `[data-pane-id="${CSS.escape(pane.id)}"] [data-path="${CSS.escape(payload.path)}"]`);
+        if (tab) {
+          tab.classList.add("changed");
+          setTimeout(() => tab.classList.remove("changed"), 2500);
+        }
+      }
+
+      refreshOutline();
+      refreshStatus(true);
+      break;
+    }
+  }
+});
+
+// ---------- keyboard ----------
 
 document.addEventListener("keydown", (event) => {
-  if (!event.ctrlKey && !event.metaKey) return;
-
-  const scope = hoveredScope || "doc";
-
-  switch (event.key) {
-    case "o": event.preventDefault(); post("pick-file"); return;
-    case "w": event.preventDefault(); if (activePath) closeTab(activePath); return;
-    case "0": event.preventDefault(); setZoom(scope, 1); return;
-    case "+":
-    case "=": event.preventDefault(); nudgeZoom(scope, 1); return;
-    case "-": event.preventDefault(); nudgeZoom(scope, -1); return;
+  // The overlay handles its own keys; Escape closes it from anywhere.
+  if (Workspace.isQuickOpen()) {
+    if (event.key === "Escape") Workspace.closeQuick();
+    return;
   }
 
-  if (event.key === "Tab" && order.length > 1) {
+  if (!event.ctrlKey && !event.metaKey) return;
+
+  const scope = Zoom.hoveredScope() || ("pane:" + Layout.activeId);
+  const pane = Layout.activePane();
+
+  switch (event.key) {
+    case "o":
+      event.preventDefault();
+      post("pick-file");
+      return;
+
+    case "k":
+      event.preventDefault();
+      post("pick-folder");
+      return;
+
+    case "p":
+      event.preventDefault();
+      Workspace.openQuick();
+      return;
+
+    case "w":
+      event.preventDefault();
+      if (pane && pane.active) {
+        rememberAnchors();
+        Layout.closeTab(pane.id, pane.active);
+        renderAll({ keepAnchors: false });
+        syncOpenPaths();
+      }
+      return;
+
+    case "0": event.preventDefault(); Zoom.set(scope, 1); return;
+    case "+":
+    case "=": event.preventDefault(); Zoom.nudge(scope, 1); return;
+    case "-": event.preventDefault(); Zoom.nudge(scope, -1); return;
+
+    case "\\":
+      event.preventDefault();
+      if (pane) {
+        rememberAnchors();
+        const created = Layout.split(pane.id, event.shiftKey ? "col" : "row");
+        // Carry the current document into the new pane so the split is useful at once.
+        if (created && pane.active) Layout.addTab(created.id, pane.active);
+        renderAll({ keepAnchors: false });
+      }
+      return;
+  }
+
+  if (event.key === "Tab" && pane && pane.tabs.length > 1) {
     event.preventDefault();
-    const index = order.indexOf(activePath);
+    const index = pane.tabs.indexOf(pane.active);
     const next = event.shiftKey
-      ? (index - 1 + order.length) % order.length
-      : (index + 1) % order.length;
-    activate(order[next]);
+      ? (index - 1 + pane.tabs.length) % pane.tabs.length
+      : (index + 1) % pane.tabs.length;
+
+    rememberAnchors();
+    pane.active = pane.tabs[next];
+    renderAll({ keepAnchors: false });
   }
 });
 
-applyZoom("doc");
-applyZoom("outline");
+openFolderEl.addEventListener("click", () => post("pick-folder"));
+
+closeWorkspaceEl.addEventListener("click", () => {
+  post("close-workspace");
+  Workspace.set(null);
+  saveSession();
+});
+
+assocButtonEl.addEventListener("click", () => {
+  post("register-association");
+  statusTextEl.textContent =
+    "Registered. Windows will ask you to confirm the default the next time you open a .md file.";
+});
+
+// ---------- boot ----------
+
+Zoom.configure({
+  before(name) {
+    const id = name.startsWith("pane:") ? name.slice(5) : null;
+    const pane = id ? Layout.pane(id) : null;
+    return pane ? { pane, anchor: captureAnchor(docElementOf(pane)) } : null;
+  },
+  after(name, token) {
+    if (token) {
+      token.pane.zoom = Zoom.levelOf(name);
+      restoreAnchor(docElementOf(token.pane), token.anchor);
+    }
+    saveSession();
+  }
+});
+
+Workspace.configure({
+  onOpenFile(path) { post("open-file", path); },
+  onChanged() { saveSession(); },
+  onNoWorkspace() { statusTextEl.textContent = "Open a folder first (Ctrl+K)"; }
+});
+
+Zoom.register("outline", 13);
+Zoom.register("tree", 13);
+
+Layout.configure({
+  renderPane,
+  onActivePaneChanged() { refreshOutline(); refreshStatus(); highlightActivePane(); },
+  onLayoutChanged() { /* sizes already applied inline */ }
+});
+
+function highlightActivePane() {
+  for (const element of panesEl.querySelectorAll(".pane")) {
+    element.classList.toggle("pane-active", element.dataset.paneId === Layout.activeId);
+  }
+}
+
+Layout.mount(panesEl);
+Zoom.applyAll();
+renderAll({ keepAnchors: false });
 post("ready");

@@ -16,29 +16,27 @@
 </head>
 <body>
   <div class="shell">
-    <div id="tabstrip" class="tabstrip" role="tablist" aria-label="Open documents"></div>
-
     <div class="body">
-      <section class="pane" data-zoom-scope="doc">
-        <header class="dochead">
-          <div class="dochead-id">
-            <span id="docName" class="dochead-name"></span>
-            <span id="docFolder" class="dochead-folder"></span>
-          </div>
-          <div class="dochead-meta">
-            <span id="docUpdated" class="dochead-updated"></span>
+      <aside id="sidebar" class="sidebar" data-zoom-scope="tree" hidden>
+        <header class="panehead">
+          <span id="workspaceName" class="panehead-title"></span>
+          <div class="panehead-actions">
             <button class="zoom-badge" type="button" data-zoom-badge
-                    title="Reset text size to 100%" aria-label="Reset text size to 100%"></button>
+                    title="Reset text size to 100%" aria-label="Reset file list text size"></button>
+            <button id="closeWorkspace" class="icon-button" type="button"
+                    title="Close workspace" aria-label="Close workspace">×</button>
           </div>
         </header>
-        <main id="doc" class="doc" data-zoom-target tabindex="-1"></main>
-      </section>
+        <div id="tree" class="tree" data-zoom-target aria-label="Workspace files"></div>
+      </aside>
 
-      <aside class="pane pane-outline" data-zoom-scope="outline">
+      <div id="panes" class="panes"></div>
+
+      <aside class="pane-outline" data-zoom-scope="outline">
         <header class="panehead">
-          <span class="panehead-title">Outline</span>
+          <span id="outlineTitle" class="panehead-title">Outline</span>
           <button class="zoom-badge" type="button" data-zoom-badge
-                  title="Reset text size to 100%" aria-label="Reset outline text size to 100%"></button>
+                  title="Reset text size to 100%" aria-label="Reset outline text size"></button>
         </header>
         <div id="outline" class="outline" data-zoom-target aria-label="Document outline"></div>
       </aside>
@@ -48,11 +46,23 @@
       <span id="pulse" class="pulse" aria-hidden="true"></span>
       <span id="statusText"></span>
       <span id="statusRight" class="status-right"></span>
+      <button id="openFolder" class="status-action" type="button" title="Ctrl+K">Open folder</button>
       <button id="assocButton" class="status-action" type="button" hidden>Set as default .md viewer</button>
     </div>
   </div>
 
+  <div id="quickOpen" class="quick" hidden>
+    <div class="quick-box">
+      <input id="quickInput" class="quick-input" type="text" spellcheck="false"
+             placeholder="Go to file" aria-label="Go to file" />
+      <div id="quickList" class="quick-list"></div>
+    </div>
+  </div>
+
   <script src="/highlight.js"></script>
+  <script src="/zoom.js"></script>
+  <script src="/layout.js"></script>
+  <script src="/workspace.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
