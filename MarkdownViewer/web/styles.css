@@ -26,17 +26,27 @@ html, body {
   line-height: 1.7;
 }
 
+/*
+ * Flex column, not a grid with a fixed row template. A template couples the layout to
+ * the number of children, and a `hidden` child takes no grid cell -- so hiding the find
+ * bar silently shifted .body into the auto row and handed the 1fr to the status bar.
+ * With flex, each child declares its own behaviour and nothing shifts.
+ */
 .shell {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   height: 100%;
+  min-height: 0;
 }
 
 .body {
+  flex: 1 1 auto;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   min-height: 0;
 }
+
+.findbar, .status { flex: 0 0 auto; }
 
 .panes { display: flex; min-width: 0; min-height: 0; }
 .panes > * { flex: 1 1 0; }

@@ -97,6 +97,25 @@ function check(name, condition, detail = "") {
 const $ = s => window.document.querySelector(s);
 const $$ = s => [...window.document.querySelectorAll(s)];
 
+// --- stylesheet invariants ---
+// jsdom performs no layout, so geometry bugs are invisible here. These assert the
+// specific shape that broke once: .shell was a grid with a three-row template, and
+// hiding the find bar (display:none takes no grid cell) shifted .body into the auto
+// row and handed the free space to the status bar.
+const cssText = readFileSync(WEB + "styles.css", "utf8");
+const shellRule = cssText.match(/\.shell\s*\{[^}]*\}/)?.[0] ?? "";
+const bodyRule = cssText.match(/^\.body\s*\{[^}]*\}/m)?.[0] ?? "";
+
+check("shell is a flex column, not a fixed grid row template",
+      /display:\s*flex/.test(shellRule) && /flex-direction:\s*column/.test(shellRule),
+      shellRule.replace(/\s+/g, " "));
+check("shell does not use grid-template-rows",
+      !/grid-template-rows/.test(shellRule));
+check("body is the flexible child", /flex:\s*1 1 auto/.test(bodyRule),
+      bodyRule.replace(/\s+/g, " "));
+check("body still fills width via its own grid",
+      /grid-template-columns/.test(bodyRule));
+
 // --- boot ---
 check("ready posted on boot", posted.some(m => m.type === "ready"));
 check("one pane exists at boot", $$(".pane").length === 1, `found ${$$(".pane").length}`);
