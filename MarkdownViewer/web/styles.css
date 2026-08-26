@@ -522,3 +522,51 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .quick-name { color: var(--text); }
 .quick-path { color: var(--text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
 .quick-empty { padding: 10px 14px; font-size: 13px; color: var(--text-muted); }
+
+
+/* ---------- find bar ---------- */
+
+.findbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  background: var(--bg-chrome);
+  border-top: 1px solid var(--border);
+}
+.findbar[hidden] { display: none; }
+
+.findbar-input {
+  width: 260px;
+  padding: 4px 9px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: #23231f;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+}
+.findbar-input:focus { border-color: var(--live); }
+.findbar-input::placeholder { color: var(--text-muted); }
+
+.findbar-count { font-size: 11px; color: var(--text-muted); min-width: 62px; }
+.findbar-scope { margin-left: auto; font-size: 11px; color: var(--text-muted); }
+
+mark.find-hit {
+  background: #4a4416;
+  color: inherit;
+  border-radius: 2px;
+}
+mark.find-current {
+  background: var(--live);
+  color: #0b1a15;
+}
+
+/* ---------- outline scroll-spy ---------- */
+
+.outline a.current {
+  color: var(--live);
+  border-left-color: var(--live);
+  background: #1b2521;
+}

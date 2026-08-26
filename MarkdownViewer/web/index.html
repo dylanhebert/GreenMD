@@ -42,6 +42,16 @@
       </aside>
     </div>
 
+    <div id="findBar" class="findbar" hidden>
+      <input id="findInput" class="findbar-input" type="text" spellcheck="false"
+             placeholder="Find in document" aria-label="Find in document" />
+      <span id="findCount" class="findbar-count"></span>
+      <button id="findPrev" class="icon-button" type="button" title="Previous (Shift+Enter)" aria-label="Previous match">&#8593;</button>
+      <button id="findNext" class="icon-button" type="button" title="Next (Enter)" aria-label="Next match">&#8595;</button>
+      <span id="findScope" class="findbar-scope"></span>
+      <button id="findClose" class="icon-button" type="button" title="Close (Esc)" aria-label="Close find">&times;</button>
+    </div>
+
     <div class="status">
       <span id="pulse" class="pulse" aria-hidden="true"></span>
       <span id="statusText"></span>
@@ -63,6 +73,7 @@
   <script src="/zoom.js"></script>
   <script src="/layout.js"></script>
   <script src="/workspace.js"></script>
+  <script src="/find.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

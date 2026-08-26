@@ -11,6 +11,10 @@ const outlineEl = document.getElementById("outline");
 const outlineTitleEl = document.getElementById("outlineTitle");
 const openFolderEl = document.getElementById("openFolder");
 const closeWorkspaceEl = document.getElementById("closeWorkspace");
+const findBarEl = document.getElementById("findBar");
+const findInputEl = document.getElementById("findInput");
+const findCountEl = document.getElementById("findCount");
+const findScopeEl = document.getElementById("findScope");
 
 /** path -> { path, title, folder, html, outline, missing, loadedAt } */
 const docs = new Map();
@@ -137,6 +141,12 @@ function paintDoc(pane) {
   HL.highlightAll(scroller);
   addCopyButtons(scroller);
   restoreAnchor(scroller, pane.anchors[pane.active]);
+
+  // A live reload replaces the DOM and takes the highlights with it.
+  if (!findBarEl.hidden && Layout.activeId === pane.id) {
+    Find.reapply(scroller);
+    updateFindCount();
+  }
 }
 
 function buildTabstrip(pane, element) {
@@ -244,6 +254,17 @@ function renderPane(pane, element) {
   scroller.setAttribute("data-zoom-target", "");
   element.append(scroller);
 
+  // rAF-throttled: scroll fires far more often than the outline needs updating.
+  let scheduled = false;
+  scroller.addEventListener("scroll", () => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      if (Layout.activeId === pane.id) syncOutlineHighlight();
+    });
+  }, { passive: true });
+
   const hint = document.createElement("div");
   hint.className = "drop-hint";
   element.append(hint);
@@ -263,13 +284,42 @@ function renderAll({ keepAnchors = true, save = true } = {}) {
   const pane = Layout.activePane();
   Workspace.highlight(pane && pane.active ? pane.active : null);
 
+  reportTitle();
+
   const active = pane && pane.active ? docs.get(pane.active) : null;
-  post("set-title", active ? active.title : null);
+  if (!findBarEl.hidden) {
+    findScopeEl.textContent = active ? active.title : "";
+    Find.run(findTarget(), findInputEl.value);
+    updateFindCount();
+  }
 
   if (save) saveSession();
 }
 
 // ---------- outline ----------
+
+/** The last heading at or above the top of the viewport -- what the reader is under. */
+function currentHeadingId(scroller) {
+  if (!scroller) return null;
+
+  const top = scroller.scrollTop;
+  let id = null;
+
+  for (const heading of scroller.querySelectorAll("h1[id],h2[id],h3[id],h4[id],h5[id],h6[id]")) {
+    if (heading.offsetTop > top + 12) break;
+    id = heading.id;
+  }
+  return id;
+}
+
+function syncOutlineHighlight() {
+  const pane = Layout.activePane();
+  const id = pane ? currentHeadingId(docElementOf(pane)) : null;
+
+  for (const link of outlineEl.querySelectorAll("a")) {
+    link.classList.toggle("current", decodeURIComponent(link.hash.slice(1)) === id);
+  }
+}
 
 function refreshOutline() {
   const pane = Layout.activePane();
@@ -287,6 +337,8 @@ function refreshOutline() {
     link.title = heading.text;
     outlineEl.append(link);
   }
+
+  syncOutlineHighlight();
 }
 
 outlineEl.addEventListener("click", (event) => {
@@ -445,6 +497,13 @@ panesEl.addEventListener("auxclick", (event) => {
 
 // ---------- host messages ----------
 
+/** The host cannot know which pane is active, so the UI owns the window title. */
+function reportTitle() {
+  const pane = Layout.activePane();
+  const active = pane && pane.active ? docs.get(pane.active) : null;
+  post("set-title", active ? active.title : null);
+}
+
 function syncOpenPaths() {
   post("sync-open", Layout.openPaths());
 }
@@ -520,6 +579,7 @@ host.addEventListener("message", (event) => {
       }
       refreshOutline();
       refreshStatus();
+      reportTitle();
       break;
     }
 
@@ -594,6 +654,12 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (event.key === "Escape" && !findBarEl.hidden) {
+    event.preventDefault();
+    closeFind();
+    return;
+  }
+
   if (!event.ctrlKey && !event.metaKey) return;
 
   const scope = Zoom.hoveredScope() || ("pane:" + Layout.activeId);
@@ -603,6 +669,11 @@ document.addEventListener("keydown", (event) => {
     case "o":
       event.preventDefault();
       post("pick-file");
+      return;
+
+    case "f":
+      event.preventDefault();
+      openFind();
       return;
 
     case "k":
@@ -654,6 +725,57 @@ document.addEventListener("keydown", (event) => {
     renderAll({ keepAnchors: false });
   }
 });
+
+// ---------- find ----------
+
+function findTarget() {
+  const pane = Layout.activePane();
+  return pane ? docElementOf(pane) : null;
+}
+
+function updateFindCount() {
+  findCountEl.textContent = Find.query
+    ? (Find.count ? `${Find.position} of ${Find.count}` : "no results")
+    : "";
+}
+
+function openFind() {
+  const pane = Layout.activePane();
+  const doc = pane && pane.active ? docs.get(pane.active) : null;
+
+  findBarEl.hidden = false;
+  findScopeEl.textContent = doc ? doc.title : "";
+  findInputEl.focus();
+  findInputEl.select();
+
+  if (findInputEl.value) runFind();
+}
+
+function closeFind() {
+  Find.clear();
+  findBarEl.hidden = true;
+  findCountEl.textContent = "";
+}
+
+function runFind() {
+  Find.run(findTarget(), findInputEl.value);
+  updateFindCount();
+}
+
+findInputEl.addEventListener("input", runFind);
+
+findInputEl.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") { event.preventDefault(); closeFind(); return; }
+  if (event.key !== "Enter") return;
+
+  event.preventDefault();
+  if (event.shiftKey) Find.previous(); else Find.next();
+  updateFindCount();
+});
+
+document.getElementById("findNext").addEventListener("click", () => { Find.next(); updateFindCount(); });
+document.getElementById("findPrev").addEventListener("click", () => { Find.previous(); updateFindCount(); });
+document.getElementById("findClose").addEventListener("click", closeFind);
 
 openFolderEl.addEventListener("click", () => post("pick-folder"));
 

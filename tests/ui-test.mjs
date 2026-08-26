@@ -60,7 +60,10 @@ window.CSS = window.CSS || {};
 if (!window.CSS.escape) window.CSS.escape = s => String(s).replace(/[^\w-]/g, c => "\\" + c);
 window.navigator.clipboard = { writeText: async () => {} };
 
-for (const file of ["highlight.js", "zoom.js", "layout.js", "workspace.js", "app.js"]) {
+// jsdom implements no layout, so these are absent. The app only uses them for effect.
+window.Element.prototype.scrollIntoView = function () {};
+
+for (const file of ["highlight.js", "zoom.js", "layout.js", "workspace.js", "find.js", "app.js"]) {
   try {
     window.eval(readFileSync(WEB + file, "utf8"));
   } catch (e) {
@@ -274,6 +277,113 @@ check("doc-content did not add a tab", $$(".pane .tab").length === tabsBefore,
       `${tabsBefore} -> ${$$(".pane .tab").length}`);
 check("doc-content painted the restored pane",
       $$(".pane .doc h1").some(h => h.textContent === "Gamma"));
+
+// --- find in page ---
+function key(k, options = {}) {
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown",
+    { key: k, bubbles: true, cancelable: true, ...options }));
+}
+
+// Collapse to a single pane with one known document first.
+send("doc-opened", {
+  path: "C:" + SEP + "docs" + SEP + "find.md",
+  title: "find.md",
+  folder: "C:" + SEP + "docs",
+  html: "<h1 id=\"one\">Alpha heading</h1><p>alpha beta alpha</p>" +
+        "<h2 id=\"two\">Beta heading</h2><p>gamma ALPHA delta</p>",
+  outline: [{ level: 1, text: "Alpha heading", id: "one" },
+            { level: 2, text: "Beta heading", id: "two" }],
+  missing: false,
+  loadedAt: new Date().toISOString()
+});
+
+check("find bar hidden by default", $("#findBar").hidden === true);
+
+key("f", { ctrlKey: true });
+check("Ctrl+F opens the find bar", $("#findBar").hidden === false);
+check("find bar names the document it searches", $("#findScope")?.textContent === "find.md",
+      $("#findScope")?.textContent);
+
+$("#findInput").value = "alpha";
+$("#findInput").dispatchEvent(new window.Event("input", { bubbles: true }));
+
+const marks = $$(".pane .doc mark.find-hit");
+check("find highlights every match, case-insensitively", marks.length === 4,
+      `${marks.length} marks: ${marks.map(m => m.textContent).join(",")}`);
+check("match count reported", $("#findCount")?.textContent === "1 of 4", $("#findCount")?.textContent);
+check("first match is current", $$(".pane .doc mark.find-current").length === 1);
+
+$("#findInput").dispatchEvent(new window.KeyboardEvent("keydown",
+  { key: "Enter", bubbles: true, cancelable: true }));
+check("Enter advances the match", $("#findCount")?.textContent === "2 of 4", $("#findCount")?.textContent);
+
+$("#findInput").dispatchEvent(new window.KeyboardEvent("keydown",
+  { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
+check("Shift+Enter goes back", $("#findCount")?.textContent === "1 of 4", $("#findCount")?.textContent);
+
+$("#findInput").value = "zzzznope";
+$("#findInput").dispatchEvent(new window.Event("input", { bubbles: true }));
+check("no-results state", $("#findCount")?.textContent === "no results", $("#findCount")?.textContent);
+check("no marks left when nothing matches", $$(".pane .doc mark.find-hit").length === 0);
+
+// A live reload must not lose the highlights.
+$("#findInput").value = "alpha";
+$("#findInput").dispatchEvent(new window.Event("input", { bubbles: true }));
+send("doc-updated", {
+  path: "C:" + SEP + "docs" + SEP + "find.md",
+  title: "find.md",
+  folder: "C:" + SEP + "docs",
+  html: "<h1 id=\"one\">Alpha heading</h1><p>alpha beta alpha rewritten</p>",
+  outline: [{ level: 1, text: "Alpha heading", id: "one" }],
+  missing: false,
+  loadedAt: new Date().toISOString()
+});
+check("search survives a live reload", $$(".pane .doc mark.find-hit").length === 3,
+      `${$$(".pane .doc mark.find-hit").length} marks after reload`);
+
+const textBefore = $(".pane .doc").textContent;
+key("Escape");
+check("Escape closes find", $("#findBar").hidden === true);
+check("closing find removes every mark", $$(".pane .doc mark.find-hit").length === 0);
+check("closing find leaves the text unchanged", $(".pane .doc").textContent === textBefore);
+
+// --- outline scroll-spy ---
+// jsdom performs no layout, so offsets are stubbed to simulate a scrolled document.
+const scroller = $(".pane .doc");
+send("doc-opened", {
+  path: "C:" + SEP + "docs" + SEP + "spy.md",
+  title: "spy.md",
+  folder: "C:" + SEP + "docs",
+  html: "<h1 id=\"h1\">First</h1><p>x</p><h2 id=\"h2\">Second</h2><p>y</p><h2 id=\"h3\">Third</h2>",
+  outline: [{ level: 1, text: "First", id: "h1" },
+            { level: 2, text: "Second", id: "h2" },
+            { level: 2, text: "Third", id: "h3" }],
+  missing: false,
+  loadedAt: new Date().toISOString()
+});
+
+const live = $(".pane .doc");
+const offsets = { h1: 0, h2: 500, h3: 1000 };
+for (const [id, top] of Object.entries(offsets)) {
+  Object.defineProperty(live.querySelector("#" + id), "offsetTop", { value: top, configurable: true });
+}
+
+function spyAt(scrollTop) {
+  Object.defineProperty(live, "scrollTop", { value: scrollTop, configurable: true, writable: true });
+  live.dispatchEvent(new window.Event("scroll"));
+  return new Promise(r => setTimeout(r, 20));
+}
+
+await spyAt(600);
+const currentLinks = $$("#outline a.current");
+check("scroll-spy marks exactly one heading", currentLinks.length === 1,
+      `${currentLinks.length} marked`);
+check("scroll-spy marks the heading the reader is under",
+      currentLinks[0]?.textContent === "Second", currentLinks[0]?.textContent);
+
+await spyAt(1200);
+check("scroll-spy follows further scrolling",
+      $("#outline a.current")?.textContent === "Third", $("#outline a.current")?.textContent);
 
 // --- report ---
 console.log("");
