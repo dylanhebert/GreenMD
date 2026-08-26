@@ -39,16 +39,21 @@ html, body {
   min-height: 0;
 }
 
+/*
+ * Flex row for the same reason the shell is a flex column: a column template couples
+ * the layout to the number of children, and a display:none child takes no grid cell.
+ * With the sidebar hidden, `auto minmax(0,1fr) auto` slid .panes into the auto column
+ * and left the outline a 0px track, rendering it off the right-hand edge.
+ */
 .body {
   flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  display: flex;
   min-height: 0;
 }
 
 .findbar, .status { flex: 0 0 auto; }
 
-.panes { display: flex; min-width: 0; min-height: 0; }
+.panes { flex: 1 1 0; display: flex; min-width: 0; min-height: 0; }
 .panes > * { flex: 1 1 0; }
 
 /* ---------- pane tree ---------- */
@@ -83,7 +88,7 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .panes .split .pane.pane-active .dochead { box-shadow: inset 2px 0 0 var(--live); }
 
 .pane-outline {
-  width: var(--outline-width, 260px);
+  flex: 0 0 var(--outline-width, 260px);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
@@ -439,9 +444,9 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 /* ---------- workspace sidebar ---------- */
 
 .sidebar {
+  flex: 0 0 230px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: 230px;
   min-width: 0;
   min-height: 0;
   overflow: hidden;

@@ -113,8 +113,20 @@ check("shell does not use grid-template-rows",
       !/grid-template-rows/.test(shellRule));
 check("body is the flexible child", /flex:\s*1 1 auto/.test(bodyRule),
       bodyRule.replace(/\s+/g, " "));
-check("body still fills width via its own grid",
-      /grid-template-columns/.test(bodyRule));
+
+// The same trap bit twice: a display:none child takes no grid cell, so a fixed
+// template silently shifts every sibling. Neither axis may use one.
+check("body is a flex row, not a fixed column template",
+      /display:\s*flex/.test(bodyRule) && !/grid-template-columns/.test(bodyRule),
+      bodyRule.replace(/\s+/g, " "));
+
+const sidebarRule = cssText.match(/^\.sidebar\s*\{[^}]*\}/m)?.[0] ?? "";
+const outlineRule = cssText.match(/^\.pane-outline\s*\{[^}]*\}/m)?.[0] ?? "";
+const panesRule = cssText.match(/^\.panes\s*\{[^}]*\}/m)?.[0] ?? "";
+
+check("sidebar sizes itself", /flex:\s*0 0 /.test(sidebarRule), sidebarRule.replace(/\s+/g, " "));
+check("outline sizes itself", /flex:\s*0 0 /.test(outlineRule), outlineRule.replace(/\s+/g, " "));
+check("panes take the remaining width", /flex:\s*1 1 0/.test(panesRule), panesRule.replace(/\s+/g, " "));
 
 // --- boot ---
 check("ready posted on boot", posted.some(m => m.type === "ready"));

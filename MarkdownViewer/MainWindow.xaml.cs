@@ -19,11 +19,13 @@ public partial class MainWindow : Window
     private readonly SessionStore _session = new();
 
     private readonly string? _initialPath;
+    private readonly string? _dumpLayoutPath;
     private bool _uiReady;
 
-    public MainWindow(string? initialPath)
+    public MainWindow(string? initialPath, string? dumpLayoutPath)
     {
         _initialPath = initialPath;
+        _dumpLayoutPath = dumpLayoutPath;
         InitializeComponent();
         Native.UseDarkTitleBar(this);
 
@@ -156,6 +158,10 @@ public partial class MainWindow : Window
                 if (payload.ValueKind == JsonValueKind.Object) await ToggleTaskAsync(payload);
                 break;
 
+            case "layout-dump":
+                WriteLayoutDump(payload);
+                break;
+
             case "set-title":
                 UpdateTitle(payload.ValueKind == JsonValueKind.String ? payload.GetString() : null);
                 break;
@@ -203,6 +209,24 @@ public partial class MainWindow : Window
         {
             Post("welcome", RenderWelcome());
         }
+
+        if (_dumpLayoutPath is not null) Post("dump-layout", new { });
+    }
+
+    /// <summary>Writes the UI's own measurements of the real window to disk, then exits.</summary>
+    private void WriteLayoutDump(JsonElement measurements)
+    {
+        if (_dumpLayoutPath is null) return;
+
+        try
+        {
+            File.WriteAllText(_dumpLayoutPath,
+                JsonSerializer.Serialize(measurements, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+
+        Close();
     }
 
     // ---------- opening documents ----------

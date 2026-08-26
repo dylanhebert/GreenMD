@@ -1039,3 +1039,81 @@ Layout.mount(panesEl);
 Zoom.applyAll();
 renderAll({ keepAnchors: false });
 post("ready");
+
+// ---------- layout diagnostic ----------
+//
+// Reasoning about this layout from screenshots has not worked. This reports what the
+// real window actually measured, including which stylesheet rules are live, so a
+// stale cached asset is distinguishable from a bad rule.
+
+function measureLayout() {
+  const box = (el) => {
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+  };
+
+  const shell = document.querySelector(".shell");
+  const body = document.querySelector(".body");
+  const panes = document.querySelector(".panes");
+  const aside = document.querySelector(".pane-outline");
+  const status = document.querySelector(".status");
+  const pane = document.querySelector(".pane");
+  const doc = document.querySelector(".pane .doc");
+  const links = [...document.querySelectorAll("#outline a")];
+
+  const shellStyle = shell ? getComputedStyle(shell) : null;
+  const bodyStyle = body ? getComputedStyle(body) : null;
+
+  return {
+    viewport: { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio },
+    computed: {
+      shellDisplay: shellStyle?.display,
+      shellFlexDirection: shellStyle?.flexDirection,
+      shellGridRows: shellStyle?.gridTemplateRows,
+      shellHeight: shellStyle?.height,
+      bodyDisplay: bodyStyle?.display,
+      bodyFlex: bodyStyle?.flex,
+      bodyGridColumns: bodyStyle?.gridTemplateColumns,
+      htmlHeight: getComputedStyle(document.documentElement).height,
+      bodyElHeight: getComputedStyle(document.body).height
+    },
+    boxes: {
+      shell: box(shell), body: box(body), panes: box(panes),
+      outlineAside: box(aside), status: box(status), pane: box(pane), doc: box(doc)
+    },
+    verdict: {
+      bodyFillsWidth: body ? Math.abs(box(body).w - window.innerWidth) <= 1 : null,
+      bodyFillsHeight: body && status
+        ? Math.abs(box(body).h - (window.innerHeight - box(status).h)) <= 2 : null,
+      statusOnBottomEdge: status
+        ? Math.abs((box(status).y + box(status).h) - window.innerHeight) <= 2 : null,
+      outlineFullHeight: aside && body ? Math.abs(box(aside).h - box(body).h) <= 2 : null,
+      // The checks that were missing: the previous verdict passed while the outline
+      // sat entirely off the right-hand edge.
+      outlineOnScreen: aside ? box(aside).x + box(aside).w <= window.innerWidth + 1 : null,
+      childrenTileBody: (panes && aside && body)
+        ? Math.abs((box(panes).w + box(aside).w) - box(body).w) <= 2 : null
+    },
+    outline: {
+      count: links.length,
+      firstWidth: links[0] ? Math.round(links[0].getBoundingClientRect().width) : null,
+      anyTruncating: links.some(a => a.scrollWidth > a.clientWidth)
+    },
+    shellChildren: shell ? [...shell.children].map(c => ({
+      tag: c.tagName.toLowerCase(),
+      cls: c.className,
+      hidden: c.hidden,
+      display: getComputedStyle(c).display,
+      box: box(c)
+    })) : []
+  };
+}
+
+host.addEventListener("message", (event) => {
+  if (event.data.type !== "dump-layout") return;
+  // Two frames so layout and any pending paint have settled.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    post("layout-dump", measureLayout());
+  }));
+});

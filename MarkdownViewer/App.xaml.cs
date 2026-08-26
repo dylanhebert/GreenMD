@@ -26,6 +26,20 @@ public partial class App : Application
 
         var path = e.Args.FirstOrDefault(a => !a.StartsWith('-') && !a.StartsWith('/'));
 
+        // Diagnostic: measure the real window and write the numbers out. Layout bugs
+        // are invisible to the jsdom suite, and reasoning about CSS from a screenshot
+        // has proven unreliable -- this reports what the running app actually did.
+        var dumpLayoutPath = e.Args
+            .FirstOrDefault(a => a.StartsWith("--dump-layout=", StringComparison.OrdinalIgnoreCase))
+            ?["--dump-layout=".Length..];
+
+        if (dumpLayoutPath is not null)
+        {
+            // A diagnostic run must never hand off to an existing window.
+            new MainWindow(path, dumpLayoutPath).Show();
+            return;
+        }
+
         _instance = new SingleInstance();
 
         if (!_instance.IsFirstInstance)
@@ -40,7 +54,7 @@ public partial class App : Application
             }
         }
 
-        var window = new MainWindow(path);
+        var window = new MainWindow(path, null);
 
         _instance.FileRequested += requested =>
             window.Dispatcher.Invoke(() => window.HandleExternalRequest(requested));
