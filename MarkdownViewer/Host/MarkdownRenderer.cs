@@ -22,9 +22,18 @@ public static partial class MarkdownRenderer
         .UseAdvancedExtensions()   // GFM tables, task lists, footnotes, autolinks, auto heading ids
         .Build();
 
-    public static RenderedDoc Render(string markdown)
+    /// <summary>Virtual origin for doc-local images, served by <see cref="AssetServer"/>.</summary>
+    public const string AssetHost = "mdasset.local";
+
+    /// <summary>Virtual origin for links to other local files; the UI turns these into tabs.</summary>
+    public const string OpenHost = "mdopen.local";
+
+    public static RenderedDoc Render(string markdown, string? baseDirectory = null)
     {
         var document = Markdown.Parse(markdown, Pipeline);
+
+        if (!string.IsNullOrEmpty(baseDirectory))
+            RewriteLocalLinks(document, baseDirectory);
 
         var outline = document.Descendants<HeadingBlock>()
             .Select(h => new Heading(h.Level, InlineText(h.Inline), h.GetAttributes().Id ?? string.Empty))
@@ -38,6 +47,47 @@ public static partial class MarkdownRenderer
         writer.Flush();
 
         return new RenderedDoc(Sanitize(writer.ToString()), outline);
+    }
+
+    /// <summary>
+    /// Points relative images and local file links at virtual origins the host serves.
+    /// Rewriting on the AST rather than the emitted HTML means image and link syntax are
+    /// handled by the same rule, and there is no regex chasing quoting in attributes.
+    /// </summary>
+    private static void RewriteLocalLinks(MarkdownDocument document, string baseDirectory)
+    {
+        foreach (var link in document.Descendants<LinkInline>())
+        {
+            var url = link.Url;
+            if (string.IsNullOrWhiteSpace(url)) continue;
+            if (url.StartsWith('#')) continue;
+
+            // Leave anything with a real scheme alone. Checking for "://" rather than
+            // Uri.TryCreate avoids treating a Windows drive letter as a scheme.
+            if (url.Contains("://") || url.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var target = url;
+            var fragment = string.Empty;
+
+            var hash = target.IndexOf('#');
+            if (hash >= 0)
+            {
+                fragment = target[hash..];
+                target = target[..hash];
+            }
+
+            if (target.Length == 0) continue;
+
+            try
+            {
+                var resolved = Path.GetFullPath(Path.Combine(baseDirectory, Uri.UnescapeDataString(target)));
+                var host = link.IsImage ? AssetHost : OpenHost;
+                link.Url = $"https://{host}/{Uri.EscapeDataString(resolved)}{fragment}";
+            }
+            catch (ArgumentException) { /* not a usable path; leave the link as authored */ }
+            catch (NotSupportedException) { }
+            catch (PathTooLongException) { }
+        }
     }
 
     private static string InlineText(ContainerInline? container)

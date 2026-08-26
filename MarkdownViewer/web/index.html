@@ -15,8 +15,42 @@
 <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <main id="doc" class="doc" tabindex="-1"></main>
-  <aside id="outline" class="outline" aria-label="Document outline"></aside>
+  <div class="shell">
+    <div id="tabstrip" class="tabstrip" role="tablist" aria-label="Open documents"></div>
+
+    <div class="body">
+      <section class="pane" data-zoom-scope="doc">
+        <header class="dochead">
+          <div class="dochead-id">
+            <span id="docName" class="dochead-name"></span>
+            <span id="docFolder" class="dochead-folder"></span>
+          </div>
+          <div class="dochead-meta">
+            <span id="docUpdated" class="dochead-updated"></span>
+            <button class="zoom-badge" type="button" data-zoom-badge
+                    title="Reset text size to 100%" aria-label="Reset text size to 100%"></button>
+          </div>
+        </header>
+        <main id="doc" class="doc" data-zoom-target tabindex="-1"></main>
+      </section>
+
+      <aside class="pane pane-outline" data-zoom-scope="outline">
+        <header class="panehead">
+          <span class="panehead-title">Outline</span>
+          <button class="zoom-badge" type="button" data-zoom-badge
+                  title="Reset text size to 100%" aria-label="Reset outline text size to 100%"></button>
+        </header>
+        <div id="outline" class="outline" data-zoom-target aria-label="Document outline"></div>
+      </aside>
+    </div>
+
+    <div class="status">
+      <span id="pulse" class="pulse" aria-hidden="true"></span>
+      <span id="statusText"></span>
+      <span id="statusRight" class="status-right"></span>
+    </div>
+  </div>
+
   <script src="/highlight.js"></script>
   <script src="/app.js"></script>
 </body>
