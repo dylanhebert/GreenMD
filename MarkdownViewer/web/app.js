@@ -62,6 +62,18 @@ function relativeTime(iso) {
   return new Date(then).toLocaleDateString();
 }
 
+function modeOf(pane, path) {
+  return pane.modes && pane.modes[path] === "edit" ? "edit" : "view";
+}
+
+function editorElementOf(pane) {
+  return panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"] .editor`);
+}
+
+function noticeElementOf(pane) {
+  return panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"] .pane-notice`);
+}
+
 function docElementOf(pane) {
   return panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"] .doc`);
 }
@@ -240,13 +252,20 @@ function buildHeader(pane, element) {
   updated.dataset.updated = doc ? doc.loadedAt : "";
   updated.textContent = doc && doc.loadedAt ? "updated " + relativeTime(doc.loadedAt) : "";
 
+  const mode = document.createElement("button");
+  mode.className = "mode-button";
+  mode.type = "button";
+  mode.textContent = "Edit";
+  mode.title = "Toggle source editing (Ctrl+E)";
+  mode.addEventListener("click", () => { Layout.setActive(pane.id); toggleMode(pane); });
+
   const badge = document.createElement("button");
   badge.className = "zoom-badge";
   badge.type = "button";
   badge.setAttribute("data-zoom-badge", "");
   badge.title = "Reset text size to 100%";
 
-  meta.append(updated, badge);
+  meta.append(updated, mode, badge);
   header.append(id, meta);
   element.append(header);
 }
@@ -255,6 +274,11 @@ function buildHeader(pane, element) {
 function renderPane(pane, element) {
   buildTabstrip(pane, element);
   buildHeader(pane, element);
+
+  const notice = document.createElement("div");
+  notice.className = "pane-notice";
+  notice.hidden = true;
+  element.append(notice);
 
   const scroller = document.createElement("main");
   scroller.className = "doc";
@@ -273,6 +297,18 @@ function renderPane(pane, element) {
     });
   }, { passive: true });
 
+  const editor = document.createElement("textarea");
+  editor.className = "editor";
+  editor.spellcheck = false;
+  editor.hidden = true;
+  editor.setAttribute("data-zoom-target", "");
+  editor.addEventListener("input", () => {
+    if (!pane.active) return;
+    Editor.setText(pane.id, pane.active, editor.value);
+    refreshDirtyMarks();
+  });
+  element.append(editor);
+
   const hint = document.createElement("div");
   hint.className = "drop-hint";
   element.append(hint);
@@ -281,6 +317,107 @@ function renderPane(pane, element) {
   Zoom.apply("pane:" + pane.id);
 
   paintDoc(pane);
+  applyMode(pane);
+}
+
+// ---------- edit mode ----------
+
+/**
+ * Shows either the rendered document or the source. Requesting the text lazily keeps
+ * the source off the wire for the common read-only case.
+ */
+function applyMode(pane) {
+  const scroller = docElementOf(pane);
+  const editor = editorElementOf(pane);
+  if (!scroller || !editor) return;
+
+  const editing = pane.active ? modeOf(pane, pane.active) === "edit" : false;
+
+  scroller.hidden = editing;
+  editor.hidden = !editing;
+
+  const button = panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"] .mode-button`);
+  if (button) {
+    button.textContent = editing ? "Editing" : "Edit";
+    button.classList.toggle("editing", editing);
+  }
+
+  if (!editing || !pane.active) { updateNotice(pane); return; }
+
+  const text = Editor.textOf(pane.id, pane.active);
+  if (text === null) {
+    Editor.buffer(pane.id, pane.active);
+    post("get-text", pane.active);
+    editor.value = "";
+    editor.placeholder = "Loading…";
+  } else {
+    editor.value = text;
+  }
+
+  updateNotice(pane);
+}
+
+function updateNotice(pane) {
+  const notice = noticeElementOf(pane);
+  if (!notice) return;
+
+  const stale = pane.active && modeOf(pane, pane.active) === "edit"
+                && Editor.isStale(pane.id, pane.active);
+
+  if (!stale) { notice.hidden = true; notice.replaceChildren(); return; }
+
+  notice.hidden = false;
+  notice.replaceChildren();
+  notice.append("This file changed on disk while you were editing.");
+
+  const discard = document.createElement("button");
+  discard.type = "button";
+  discard.textContent = "Discard mine";
+  discard.addEventListener("click", () => {
+    Editor.forget(pane.id, pane.active);
+    post("get-text", pane.active);
+    applyMode(pane);
+  });
+
+  const overwrite = document.createElement("button");
+  overwrite.type = "button";
+  overwrite.textContent = "Keep mine";
+  overwrite.addEventListener("click", () => saveActive(true));
+
+  notice.append(discard, overwrite);
+}
+
+function toggleMode(pane) {
+  if (!pane || !pane.active) return;
+
+  pane.modes[pane.active] = modeOf(pane, pane.active) === "edit" ? "view" : "edit";
+  applyMode(pane);
+  refreshDirtyMarks();
+  saveSession();
+
+  const editor = editorElementOf(pane);
+  if (editor && !editor.hidden) editor.focus();
+}
+
+function saveActive(force) {
+  const pane = Layout.activePane();
+  if (!pane || !pane.active) return;
+
+  const text = Editor.textOf(pane.id, pane.active);
+  if (text === null) return;
+
+  post("save-doc", { path: pane.active, text, force: !!force });
+}
+
+/** Dirty state lives per buffer, but the marker belongs on the tab. */
+function refreshDirtyMarks() {
+  for (const pane of Layout.panes()) {
+    for (const path of pane.tabs) {
+      const tab = panesEl.querySelector(
+        `[data-pane-id="${CSS.escape(pane.id)}"] [data-path="${CSS.escape(path)}"]`);
+      if (tab) tab.classList.toggle("dirty", Editor.isDirty(pane.id, path));
+    }
+  }
 }
 
 function renderAll({ keepAnchors = true, save = true } = {}) {
@@ -291,6 +428,9 @@ function renderAll({ keepAnchors = true, save = true } = {}) {
 
   const pane = Layout.activePane();
   Workspace.highlight(pane && pane.active ? pane.active : null);
+
+  for (const p of Layout.panes()) applyMode(p);
+  refreshDirtyMarks();
 
   reportTitle();
 
@@ -601,12 +741,39 @@ host.addEventListener("message", (event) => {
       for (const pane of Layout.panesShowing(payload.path)) {
         if (pane.active === payload.path) paintDoc(pane);
         refreshPaneChrome(pane);
+        applyMode(pane);
       }
       refreshOutline();
       refreshStatus();
-      reportTitle();
+      for (const p of Layout.panes()) applyMode(p);
+  refreshDirtyMarks();
+
+  reportTitle();
       break;
     }
+
+    case "doc-text":
+      Editor.receiveText(payload.path, payload.text);
+      for (const pane of Layout.panesShowing(payload.path)) applyMode(pane);
+      refreshDirtyMarks();
+      break;
+
+    case "save-result":
+      if (payload.saved) {
+        Editor.markSaved(payload.path);
+        refreshDirtyMarks();
+        for (const pane of Layout.panesShowing(payload.path)) updateNotice(pane);
+        statusTextEl.textContent = "Saved " + payload.path.split(/[\/]/).pop();
+      } else if (payload.conflict) {
+        statusTextEl.textContent = "Not saved — the file changed on disk. Use “Keep mine” to overwrite.";
+        for (const pane of Layout.panesShowing(payload.path)) {
+          if (pane.active === payload.path) Editor.buffer(pane.id, payload.path).staleOnDisk = true;
+          updateNotice(pane);
+        }
+      } else {
+        statusTextEl.textContent = "Could not save " + payload.path.split(/[\/]/).pop();
+      }
+      break;
 
     case "association":
       assocButtonEl.hidden = payload.registered;
@@ -664,6 +831,9 @@ host.addEventListener("message", (event) => {
         }
       }
 
+      if (Editor.noteExternalChange(payload.path)) post("get-text", payload.path);
+      for (const pane of Layout.panesShowing(payload.path)) updateNotice(pane);
+
       refreshOutline();
       refreshStatus(true);
       break;
@@ -695,6 +865,16 @@ document.addEventListener("keydown", (event) => {
     case "o":
       event.preventDefault();
       post("pick-file");
+      return;
+
+    case "e":
+      event.preventDefault();
+      toggleMode(Layout.activePane());
+      return;
+
+    case "s":
+      event.preventDefault();
+      saveActive(false);
       return;
 
     case "f":

@@ -425,6 +425,73 @@ check("toggle carries the index and state",
 check("toggle targets the right document",
       toggle?.payload?.path?.endsWith("todo.md"), toggle?.payload?.path);
 
+// --- edit mode ---
+// NL avoids backslash escapes entirely; they have been mangled by tooling before.
+const NL = String.fromCharCode(10);
+const SRC_CLEAN = "# Title" + NL + NL + "body" + NL;
+const SRC_EDITED = "# Title" + NL + NL + "edited" + NL;
+const SRC_MINE = "# Title" + NL + NL + "mine" + NL;
+
+const EDIT_PATH = "C:" + SEP + "docs" + SEP + "edit.md";
+function editDoc(bodyHtml) {
+  return {
+    path: EDIT_PATH, title: "edit.md", folder: "C:" + SEP + "docs",
+    html: '<h1 id="t">Title</h1><p>' + bodyHtml + '</p>',
+    outline: [{ level: 1, text: "Title", id: "t" }],
+    missing: false, loadedAt: new Date().toISOString()
+  };
+}
+
+send("doc-opened", editDoc("body"));
+
+check("editor hidden in view mode", $(".pane .editor")?.hidden === true);
+check("mode button says Edit", $(".pane .mode-button")?.textContent === "Edit");
+
+const beforeText = posted.filter(m => m.type === "get-text").length;
+key("e", { ctrlKey: true });
+check("Ctrl+E reveals the editor", $(".pane .editor")?.hidden === false);
+check("rendered view hides while editing", $(".pane .doc")?.hidden === true);
+check("entering edit mode requests the source",
+      posted.filter(m => m.type === "get-text").length === beforeText + 1);
+
+send("doc-text", { path: EDIT_PATH, text: SRC_CLEAN });
+check("editor receives the source", $(".pane .editor")?.value === SRC_CLEAN,
+      JSON.stringify($(".pane .editor")?.value));
+check("clean buffer is not marked dirty", $$(".pane .tab.dirty").length === 0);
+
+$(".pane .editor").value = SRC_EDITED;
+$(".pane .editor").dispatchEvent(new window.Event("input", { bubbles: true }));
+check("typing marks the tab dirty", $$(".pane .tab.dirty").length === 1);
+
+const beforeSave = posted.filter(m => m.type === "save-doc").length;
+key("s", { ctrlKey: true });
+const save = posted.filter(m => m.type === "save-doc").pop();
+check("Ctrl+S sends a save", posted.filter(m => m.type === "save-doc").length === beforeSave + 1);
+check("save carries the edited text", save?.payload?.text === SRC_EDITED,
+      JSON.stringify(save?.payload?.text));
+check("save is not forced by default", save?.payload?.force === false);
+
+send("save-result", { path: EDIT_PATH, saved: true, conflict: false });
+check("successful save clears the dirty mark", $$(".pane .tab.dirty").length === 0);
+
+// A conflicting save must warn rather than overwrite.
+$(".pane .editor").value = SRC_MINE;
+$(".pane .editor").dispatchEvent(new window.Event("input", { bubbles: true }));
+send("save-result", { path: EDIT_PATH, saved: false, conflict: true });
+check("conflict shows a notice", $(".pane .pane-notice")?.hidden === false);
+check("conflict offers both choices", $$(".pane .pane-notice button").length === 2,
+      `${$$(".pane .pane-notice button").length} buttons`);
+check("conflict keeps the user's text", $(".pane .editor")?.value === SRC_MINE);
+
+// An external change must not clobber an unsaved buffer.
+send("doc-updated", editDoc("from disk"));
+check("external change does not overwrite unsaved text",
+      $(".pane .editor")?.value === SRC_MINE,
+      JSON.stringify($(".pane .editor")?.value));
+
+key("e", { ctrlKey: true });
+check("Ctrl+E returns to the rendered view", $(".pane .doc")?.hidden === false);
+
 // --- report ---
 console.log("");
 for (const r of results) {
