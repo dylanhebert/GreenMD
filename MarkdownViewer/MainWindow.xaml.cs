@@ -91,6 +91,12 @@ public partial class MainWindow : Window
                 _uiReady = true;
                 if (!string.IsNullOrWhiteSpace(_initialPath)) await OpenAsync(_initialPath);
                 else Post("welcome", RenderWelcome());
+                PostAssociationState();
+                break;
+
+            case "register-association":
+                FileAssociation.Register();
+                PostAssociationState();
                 break;
 
             case "open-file":
@@ -247,6 +253,12 @@ public partial class MainWindow : Window
         try { Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true }); }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { }
     }
+
+    private void PostAssociationState() => Post("association", new
+    {
+        registered = FileAssociation.IsRegistered(),
+        exe = FileAssociation.ExecutablePath
+    });
 
     private void Post(string type, object payload) =>
         Web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type, payload }, JsonOptions));

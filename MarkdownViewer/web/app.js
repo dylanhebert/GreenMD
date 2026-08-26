@@ -11,6 +11,7 @@ const docUpdatedEl = document.getElementById("docUpdated");
 const pulseEl = document.getElementById("pulse");
 const statusTextEl = document.getElementById("statusText");
 const statusRightEl = document.getElementById("statusRight");
+const assocButtonEl = document.getElementById("assocButton");
 
 /** path -> { path, title, folder, html, outline, missing, loadedAt, anchor } */
 const tabs = new Map();
@@ -82,6 +83,11 @@ document.addEventListener("wheel", (event) => {
   event.preventDefault();
   nudgeZoom(scope.dataset.zoomScope, event.deltaY < 0 ? 1 : -1);
 }, { passive: false });
+
+assocButtonEl.addEventListener("click", () => {
+  post("register-association");
+  setStatus("Registered. Windows will ask you to confirm the default the next time you open a .md file.", "", false);
+});
 
 for (const badge of document.querySelectorAll("[data-zoom-badge]")) {
   badge.addEventListener("click", () => {
@@ -317,6 +323,13 @@ host.addEventListener("message", (event) => {
     renderTabs();
     updateHeader();
     setStatus("No document open", "Ctrl+O to open", false);
+    return;
+  }
+
+  if (type === "association") {
+    // Only offered while unregistered -- once it is done there is nothing to click.
+    assocButtonEl.hidden = payload.registered;
+    assocButtonEl.title = payload.exe;
     return;
   }
 

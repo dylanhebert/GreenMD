@@ -320,6 +320,21 @@ html, body {
 
 .status-right { margin-left: auto; color: var(--text-muted); }
 
+[hidden] { display: none !important; }
+
+.status-action {
+  margin-left: 10px;
+  padding: 1px 9px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--live);
+  background: transparent;
+  border: 1px solid #2a4d43;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.status-action:hover { background: #1d2c27; border-color: var(--live); }
+
 .pulse {
   width: 6px;
   height: 6px;

@@ -9,6 +9,21 @@ public partial class App : Application
 
     private void OnStartup(object sender, StartupEventArgs e)
     {
+        // Scripted install/uninstall. Neither needs a window.
+        if (e.Args.Any(a => a.Equals("--register", StringComparison.OrdinalIgnoreCase)))
+        {
+            FileAssociation.Register();
+            Shutdown();
+            return;
+        }
+
+        if (e.Args.Any(a => a.Equals("--unregister", StringComparison.OrdinalIgnoreCase)))
+        {
+            FileAssociation.Unregister();
+            Shutdown();
+            return;
+        }
+
         var path = e.Args.FirstOrDefault(a => !a.StartsWith('-') && !a.StartsWith('/'));
 
         _instance = new SingleInstance();
