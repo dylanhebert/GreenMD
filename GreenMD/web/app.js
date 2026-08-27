@@ -702,12 +702,52 @@ function toggleMode(pane) {
   if (editor && !editor.hidden) editor.focus();
 }
 
+// ---------- new files ----------
+
+/** Untitled documents exist only in memory until their first save names them. */
+const UNTITLED_PREFIX = "untitled:";
+let untitledCounter = 0;
+
+const isUntitled = path => typeof path === "string" && path.startsWith(UNTITLED_PREFIX);
+
+function untitledDoc(path) {
+  return { path, title: "Untitled", folder: "", html: "", outline: [],
+           missing: false, loadedAt: new Date().toISOString() };
+}
+
+function newFile() {
+  const pane = Layout.activePane();
+  if (!pane) return;
+
+  const path = UNTITLED_PREFIX + (++untitledCounter);
+  docs.set(path, untitledDoc(path));
+
+  rememberAnchors();
+  Layout.addTab(pane.id, path);
+  // Straight into edit mode with an empty, already-loaded buffer -- there is no
+  // host round trip to make for a file that does not exist yet.
+  Editor.setText(pane.id, path, "");
+  pane.modes[path] = "edit";
+  renderAll({ keepAnchors: false });
+  syncOpenPaths();
+
+  const editor = editorElementOf(pane);
+  if (editor) editor.focus();
+}
+
 function saveActive(force) {
   const pane = Layout.activePane();
   if (!pane || !pane.active) return;
 
   const text = Editor.textOf(pane.id, pane.active);
   if (text === null) return;
+
+  // An untitled buffer has nowhere to go yet: the host asks where, writes, and
+  // answers saved-as, which swaps this tab over to the real file in place.
+  if (isUntitled(pane.active)) {
+    post("save-as", { from: pane.active, text });
+    return;
+  }
 
   // Do not let an unforced save leave here once the file has moved on disk. The host
   // decides conflicts by comparing the file against the hash it last read, and a live
@@ -1273,6 +1313,13 @@ panesEl.addEventListener("paste", (event) => {
   if (!pane || !pane.active) return;
 
   event.preventDefault();
+
+  // An unsaved note has no folder for the image to land in yet.
+  if (isUntitled(pane.active)) {
+    statusTextEl.textContent = "Save the note first (Ctrl+S) — a pasted image needs a folder to land in.";
+    return;
+  }
+
   post("paste-image", { path: pane.active, paneId: pane.id });
 });
 
@@ -1460,7 +1507,8 @@ function reportTitle() {
 }
 
 function syncOpenPaths() {
-  post("sync-open", Layout.openPaths());
+  // Untitled tabs are not the host's business until they have a file behind them.
+  post("sync-open", Layout.openPaths().filter(path => !isUntitled(path)));
 }
 
 /**
@@ -1491,9 +1539,18 @@ function restoreSession(state) {
 
   if (state.layout) Layout.restore(state.layout);
 
+  // A restored untitled tab gets an empty in-memory document again; its unsaved
+  // text did not survive the restart, but the dirty-close guard makes that rare.
+  for (const path of Layout.openPaths()) {
+    if (!isUntitled(path)) continue;
+    docs.set(path, untitledDoc(path));
+    const n = Number(path.slice(UNTITLED_PREFIX.length));
+    if (Number.isFinite(n)) untitledCounter = Math.max(untitledCounter, n);
+  }
+
   renderAll({ keepAnchors: false, save: false });
 
-  const paths = Layout.openPaths();
+  const paths = Layout.openPaths().filter(path => !isUntitled(path));
   if (paths.length) post("load-docs", paths);
 }
 
@@ -1612,6 +1669,30 @@ host.addEventListener("message", (event) => {
     case "error":
       statusTextEl.textContent = payload.message;
       break;
+
+    case "saved-as": {
+      // An untitled tab becomes the real file in place: same panes, same mode,
+      // same buffer -- now clean, since its text just hit the disk.
+      const from = payload.from;
+      const to = payload.path;
+      docs.delete(from);
+
+      for (const pane of Layout.panesShowing(from)) {
+        const index = pane.tabs.indexOf(from);
+        if (index >= 0) pane.tabs[index] = to;
+        if (pane.active === from) pane.active = to;
+        if (pane.modes[from] !== undefined) { pane.modes[to] = pane.modes[from]; delete pane.modes[from]; }
+        if (pane.anchors[from] !== undefined) { pane.anchors[to] = pane.anchors[from]; delete pane.anchors[from]; }
+
+        const text = Editor.textOf(pane.id, from);
+        Editor.forget(pane.id, from);
+        if (text !== null) {
+          Editor.setText(pane.id, to, text);
+          Editor.buffer(pane.id, to).base = text;
+        }
+      }
+      break;
+    }
 
     case "doc-opened": {
       docs.set(payload.path, payload);
@@ -1741,13 +1822,18 @@ window.Commands = (() => {
   const define = (id, label, keys, run, available, reason) =>
     map.set(id, { id, label, keys, run, available, reason });
 
+  define("newFile", "New file", "Ctrl+N", newFile);
   define("openFile", "Open file...", "Ctrl+O", () => post("pick-file"));
   define("addFolder", "Add folder to sidebar...", "Ctrl+K", () => post("pick-folder"));
   define("goToFile", "Go to file...", "Ctrl+P", () => Workspace.openQuick(recents));
   define("find", "Find in document", "Ctrl+F", openFind);
 
   define("save", "Save", "Ctrl+S", () => saveActive(false),
-    () => { const p = Layout.activePane(); return !!(p && p.active && Editor.isDirty(p.id, p.active)); },
+    () => {
+      const p = Layout.activePane();
+      // An untitled tab is always saveable: its first save is what names it.
+      return !!(p && p.active && (isUntitled(p.active) || Editor.isDirty(p.id, p.active)));
+    },
     "Nothing to save — this document has no unsaved changes.");
 
   define("closeTab", "Close tab", "Ctrl+W", () => {
@@ -1842,6 +1928,7 @@ function cycleTab(delta) {
 
 /** Key combinations, resolved against the same registry the menu renders from. */
 window.KEY_BINDINGS = [
+  { key: "n", command: "newFile" },
   { key: "o", command: "openFile" },
   { key: "k", command: "addFolder" },
   { key: "p", command: "goToFile" },
@@ -2179,7 +2266,8 @@ document.getElementById("exitSave").addEventListener("click", () => {
   // Close once every save has come back, so nothing is lost to a failed write.
   pendingExitSaves = new Set(dirty.map(d => d.path));
   for (const { paneId, path } of dirty) {
-    post("save-doc", { path, text: Editor.textOf(paneId, path), force: false });
+    if (isUntitled(path)) post("save-as", { from: path, text: Editor.textOf(paneId, path) });
+    else post("save-doc", { path, text: Editor.textOf(paneId, path), force: false });
   }
 });
 

@@ -20,6 +20,7 @@ window.Menu = (() => {
     {
       label: "File",
       items: [
+        { command: "newFile" },
         { command: "openFile" },
         { command: "addFolder" },
         { separator: true },

@@ -206,6 +206,10 @@ public partial class MainWindow : Window
                 if (payload.ValueKind == JsonValueKind.Object) PasteImage(payload);
                 break;
 
+            case "save-as":
+                if (payload.ValueKind == JsonValueKind.Object) await SaveAsAsync(payload);
+                break;
+
             case "layout-dump":
                 WriteLayoutDump(payload);
                 break;
@@ -437,6 +441,57 @@ public partial class MainWindow : Window
         var document = _documents.Get(path);
         if (document is not null) Post("doc-updated", Describe(document));
         SyncAssetWatches();
+    }
+
+    /// <summary>
+    /// First save of an untitled tab: ask where, write the text, then hand the tab its
+    /// real identity. saved-as renames the UI's state in place, save-result settles the
+    /// exit-save machinery, and OpenAsync brings the file in as a normal document.
+    /// </summary>
+    private async Task SaveAsAsync(JsonElement request)
+    {
+        if (!request.TryGetProperty("from", out var fromElement)
+            || !request.TryGetProperty("text", out var textElement)
+            || fromElement.GetString() is not { Length: > 0 } from
+            || textElement.GetString() is not { } text)
+        {
+            return;
+        }
+
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Filter = "Markdown (*.md)|*.md|All files (*.*)|*.*",
+            DefaultExt = ".md",
+            FileName = "untitled.md"
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            Post("save-result", new { path = from, saved = false, conflict = false });
+            return;
+        }
+
+        var full = DocumentStore.Normalize(dialog.FileName);
+
+        try
+        {
+            var normalized = text.Replace("\r\n", "\n").Replace("\n", "\r\n");
+            await File.WriteAllTextAsync(full, normalized, new System.Text.UTF8Encoding(false));
+        }
+        catch (IOException)
+        {
+            Post("save-result", new { path = from, saved = false, conflict = false });
+            return;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            Post("save-result", new { path = from, saved = false, conflict = false });
+            return;
+        }
+
+        Post("saved-as", new { from, path = full });
+        Post("save-result", new { path = from, saved = true, conflict = false });
+        await OpenAsync(full);
     }
 
     /// <summary>

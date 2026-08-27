@@ -1726,6 +1726,54 @@ check("the reply inserts the markdown link at the cursor",
 check("the inserted link marks the buffer dirty",
       !!tabFor(MARK).closest(".pane").querySelector(".tab.dirty"));
 
+// --- new files ---
+key("n", { ctrlKey: true });
+const untitledTab = $$(".tab").find(t => t.dataset.path.startsWith("untitled:"));
+check("Ctrl+N opens an untitled tab", !!untitledTab);
+check("the untitled tab is named Untitled",
+      untitledTab?.querySelector(".tab-label")?.textContent === "Untitled");
+const uPath = untitledTab?.dataset.path;
+const uPane = untitledTab?.closest(".pane");
+check("a new file starts in edit mode",
+      uPane?.querySelector(".editor-wrap")?.hidden === false);
+check("untitled tabs are not synced to the host",
+      !(posted.filter(m => m.type === "sync-open").pop()?.payload || [])
+        .some(p => p.startsWith("untitled:")));
+
+const uEditor = uPane.querySelector("textarea.editor");
+uEditor.value = "# my note";
+uEditor.dispatchEvent(new window.Event("input", { bubbles: true }));
+
+key("s", { ctrlKey: true });
+const saveAs = posted.filter(m => m.type === "save-as").pop();
+check("saving an untitled tab asks the host for a destination",
+      saveAs?.payload?.from === uPath && saveAs?.payload?.text === "# my note",
+      JSON.stringify(saveAs?.payload));
+
+const REAL = "C:" + SEP + "docs" + SEP + "my-note.md";
+send("saved-as", { from: uPath, path: REAL });
+send("save-result", { path: uPath, saved: true, conflict: false });
+send("doc-opened", doc(REAL, "my-note.md"));
+
+check("the tab takes on the real file in place",
+      !$$(".tab").some(t => t.dataset.path === uPath)
+      && $$(".tab").filter(t => t.dataset.path === REAL).length === 1);
+check("the buffer survives the rename, marked clean",
+      tabFor(REAL).closest(".pane").querySelector("textarea.editor")?.value === "# my note"
+      && !tabFor(REAL).classList.contains("dirty"));
+check("the renamed tab stays in edit mode",
+      tabFor(REAL).closest(".pane").querySelector(".editor-wrap")?.hidden === false);
+
+// Pasting an image into a not-yet-saved note has nowhere to put the file.
+key("n", { ctrlKey: true });
+const u2Pane = $$(".tab").find(t => t.dataset.path.startsWith("untitled:")).closest(".pane");
+const beforeUntitledPaste = posted.filter(m => m.type === "paste-image").length;
+u2Pane.querySelector("textarea.editor").dispatchEvent(pasteEvent([{ type: "image/png" }]));
+check("pasting an image into an unsaved note explains itself instead of vanishing",
+      posted.filter(m => m.type === "paste-image").length === beforeUntitledPaste
+      && $("#statusText").textContent.includes("Save the note first"),
+      $("#statusText").textContent);
+
 // --- report ---
 console.log("");
 for (const r of results) {
