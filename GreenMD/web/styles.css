@@ -137,6 +137,29 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .tab.drop-before { box-shadow: inset 2px 0 0 var(--live); }
 .tab.drop-after  { box-shadow: inset -2px 0 0 var(--live); }
 
+/* ---------- image lightbox ---------- */
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: rgba(12, 12, 11, .88);
+}
+.lightbox[hidden] { display: none; }
+
+/* The transform carries pan and zoom; the max sizes make scale 1 mean "fits". */
+.lightbox img {
+  max-width: 92vw;
+  max-height: 92vh;
+  cursor: grab;
+  user-select: none;
+}
+.lightbox.panning img { cursor: grabbing; }
+
 /* ---------- tab strip ---------- */
 
 .tabstrip {
@@ -403,7 +426,9 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .doc tr:nth-child(2n) td { background: #212120; }
 
 .doc hr { border: 0; border-top: 1px solid var(--border); margin: 2em 0; }
-.doc img { max-width: 100%; border-radius: 6px; }
+/* A bare image opens the lightbox, so it advertises that; a linked one is a link. */
+.doc img { max-width: 100%; border-radius: 6px; cursor: zoom-in; }
+.doc a img { cursor: pointer; }
 
 .doc-missing { color: var(--text-dim); }
 .doc-missing-path { font-family: "Cascadia Mono", Consolas, monospace; font-size: .85em; color: var(--text-muted); }

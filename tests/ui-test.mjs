@@ -1623,6 +1623,59 @@ send("asset-updated", { path: "C:" + SEP + "docs" + SEP + "other.png" });
 check("an unrelated image change touches nothing",
       localImg().getAttribute("src") === beforeUnrelated);
 
+// --- image lightbox ---
+// The MARK doc still shows the chart image from the live-reload tests.
+const chartImg = () => mScroller().querySelector('img[alt="chart"]');
+chartImg().dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("clicking an inline image opens the lightbox", $("#lightbox").hidden === false);
+check("the lightbox shows the clicked image",
+      ($("#lightboxImage").getAttribute("src") || "").startsWith(IMG_SRC),
+      $("#lightboxImage").getAttribute("src"));
+
+// Zooming at the viewport centre scales without panning.
+$("#lightbox").dispatchEvent(new window.WheelEvent("wheel",
+  { bubbles: true, cancelable: true, deltaY: -100,
+    clientX: window.innerWidth / 2, clientY: window.innerHeight / 2 }));
+check("scrolling zooms the image",
+      $("#lightboxImage").style.transform.includes("scale(1.2)"),
+      $("#lightboxImage").style.transform);
+check("a centre zoom does not pan",
+      $("#lightboxImage").style.transform.startsWith("translate(0px, 0px)"),
+      $("#lightboxImage").style.transform);
+
+// An off-centre zoom pans so the point under the cursor stays put.
+$("#lightbox").dispatchEvent(new window.WheelEvent("wheel",
+  { bubbles: true, cancelable: true, deltaY: -100, clientX: 100, clientY: 100 }));
+check("an off-centre zoom keeps the cursor point fixed",
+      !$("#lightboxImage").style.transform.startsWith("translate(0px, 0px)"),
+      $("#lightboxImage").style.transform);
+
+// Dragging pans.
+const beforePan = $("#lightboxImage").style.transform;
+$("#lightboxImage").dispatchEvent(new window.MouseEvent("mousedown",
+  { bubbles: true, button: 0, clientX: 200, clientY: 200 }));
+window.document.dispatchEvent(new window.MouseEvent("mousemove",
+  { bubbles: true, clientX: 240, clientY: 230 }));
+window.document.dispatchEvent(new window.MouseEvent("mouseup", { bubbles: true }));
+check("dragging pans the image",
+      $("#lightboxImage").style.transform !== beforePan,
+      $("#lightboxImage").style.transform);
+
+$("#lightboxImage").dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
+check("double-click resets the view",
+      $("#lightboxImage").style.transform === "translate(0px, 0px) scale(1)");
+
+key("Escape");
+check("Escape closes the lightbox", $("#lightbox").hidden === true);
+
+// A linked image follows its link instead.
+send("doc-updated", markPayload(
+  '<h1 id="w">W</h1><p><a href="https://example.com/x"><img src="' + IMG_SRC + '" alt="linked"></a></p>'));
+key("m", { ctrlKey: true });
+mScroller().querySelector('img[alt="linked"]')
+  .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("an image inside a link does not open the lightbox", $("#lightbox").hidden === true);
+
 // --- report ---
 console.log("");
 for (const r of results) {

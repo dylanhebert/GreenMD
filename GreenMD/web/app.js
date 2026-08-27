@@ -1212,6 +1212,13 @@ panesEl.addEventListener("click", (event) => {
     return;
   }
 
+  // A bare image opens the lightbox; one wrapped in a link stays a link.
+  const image = event.target.closest(".doc img");
+  if (image && !event.target.closest("a[href]")) {
+    openLightbox(image.currentSrc || image.src);
+    return;
+  }
+
   const link = event.target.closest(".doc a[href]");
   if (!link) return;
 
@@ -1347,6 +1354,79 @@ document.addEventListener("mousedown", (event) => {
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && contextMenuEl) { closeTabContextMenu(); event.stopPropagation(); }
+});
+
+// ---------- image lightbox ----------
+
+const lightboxEl = document.getElementById("lightbox");
+const lightboxImageEl = document.getElementById("lightboxImage");
+const lightboxState = { scale: 1, x: 0, y: 0 };
+let lightboxPan = null;
+
+function applyLightboxTransform() {
+  lightboxImageEl.style.transform =
+    `translate(${lightboxState.x}px, ${lightboxState.y}px) scale(${lightboxState.scale})`;
+}
+
+function resetLightboxView() {
+  lightboxState.scale = 1;
+  lightboxState.x = 0;
+  lightboxState.y = 0;
+  applyLightboxTransform();
+}
+
+function openLightbox(src) {
+  resetLightboxView();
+  lightboxImageEl.src = src;
+  lightboxEl.hidden = false;
+}
+
+function closeLightbox() {
+  lightboxEl.hidden = true;
+  lightboxImageEl.removeAttribute("src");
+}
+
+lightboxEl.addEventListener("wheel", (event) => {
+  event.preventDefault();
+
+  const factor = event.deltaY < 0 ? 1.2 : 1 / 1.2;
+  const next = Math.min(12, Math.max(0.25, lightboxState.scale * factor));
+  if (next === lightboxState.scale) return;
+
+  // The point under the cursor stays put while the image scales around it.
+  const dx = event.clientX - window.innerWidth / 2;
+  const dy = event.clientY - window.innerHeight / 2;
+  const ratio = next / lightboxState.scale;
+  lightboxState.x = dx - ratio * (dx - lightboxState.x);
+  lightboxState.y = dy - ratio * (dy - lightboxState.y);
+  lightboxState.scale = next;
+  applyLightboxTransform();
+}, { passive: false });
+
+lightboxImageEl.addEventListener("mousedown", (event) => {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  lightboxPan = { fromX: event.clientX - lightboxState.x, fromY: event.clientY - lightboxState.y };
+  lightboxEl.classList.add("panning");
+});
+
+document.addEventListener("mousemove", (event) => {
+  if (!lightboxPan) return;
+  lightboxState.x = event.clientX - lightboxPan.fromX;
+  lightboxState.y = event.clientY - lightboxPan.fromY;
+  applyLightboxTransform();
+});
+
+document.addEventListener("mouseup", () => {
+  if (!lightboxPan) return;
+  lightboxPan = null;
+  lightboxEl.classList.remove("panning");
+});
+
+lightboxImageEl.addEventListener("dblclick", resetLightboxView);
+
+lightboxEl.addEventListener("click", (event) => {
+  if (event.target === lightboxEl) closeLightbox();
 });
 
 // ---------- host messages ----------
@@ -1738,6 +1818,13 @@ window.KEY_BINDINGS = [
 ];
 
 document.addEventListener("keydown", (event) => {
+  // Topmost overlay first: the lightbox sits above everything else.
+  if (event.key === "Escape" && !lightboxEl.hidden) {
+    event.preventDefault();
+    closeLightbox();
+    return;
+  }
+
   // The overlay handles its own keys; Escape closes it from anywhere.
   if (Workspace.isQuickOpen()) {
     if (event.key === "Escape") Workspace.closeQuick();
