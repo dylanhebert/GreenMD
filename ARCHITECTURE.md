@@ -4,8 +4,8 @@
 > out here with its history intact.
 
 A dark-mode desktop viewer for markdown files, built primarily for reading docs that
-Claude generates and rewrites while you have them open. Read-only to start, with a
-plain-text edit toggle planned.
+Claude generates and rewrites while you have them open. A viewer first: plain-text
+source editing exists behind Ctrl+E, and stays deliberately plain.
 
 ## Why not an existing tool
 
@@ -64,6 +64,16 @@ mapping (`https://greenmd.app/` to `web/`), since that folder is fixed.
 
 Relative links to other `.md` files are intercepted and opened as a tab instead of
 navigating the WebView2 away from the app shell.
+
+### External drops come through the page
+
+`AllowExternalDrop = false` looked right: it routed Explorer drops to the WPF
+handlers, which get real paths, where the page would only get pathless `File`
+objects. In the WPF host it also silently suppresses the page's own HTML5 drags —
+tab dragging never started, and no test could see it because jsdom cannot perform a
+native drag. External drop stays enabled; the page accepts the drop and posts it back
+with `postMessageWithAdditionalObjects`, whose `CoreWebView2File` objects carry the
+real path the watcher needs. One path for drops, and tab dragging works.
 
 ### Dark only
 
@@ -180,6 +190,27 @@ Plus:
 - **An updated signal** — a brief pulse on the tab and a status-bar timestamp, so a silent
   background change does not leave you wondering whether the view is stale.
 
+### Change marks
+
+A reload tells you the document changed; it does not tell you what. Every reload is
+diffed block-by-block against the version the reader last **marked as seen** — not the
+previous render — so marks accumulate across an agent's rewrites until dismissed with
+the header chip or Ctrl+M. Rewritten blocks get an amber bar, new ones a green kept
+distinct from the live-pulse teal, and removed ones a dashed seam. A rewritten list is
+re-diffed item by item, so appending one entry to a 30-item plan marks that entry
+rather than lighting the whole list.
+
+The diff is an LCS over serialized top-level blocks, with the common prefix and suffix
+trimmed first so the quadratic core stays small for the local edits agents actually
+make. Runs of consecutive edits pair deletes against inserts to tell a rewrite from an
+addition, and that pairing is what makes the second, item-level pass possible.
+
+It lives in the UI rather than the host because the rendered HTML is what gets marked
+and the UI already holds it. The reader's own saves and checkbox ticks rebaseline
+silently — they are not news to the person who made them. A View-menu toggle hides the
+paint without stopping the tracking underneath, and the choice persists with the
+session.
+
 ### OneDrive
 
 A OneDrive-synced folder is a normal place to keep documents, and every file in one
@@ -233,6 +264,14 @@ Each pane shows its level top-right, browser style, hidden at 100%. Clicking it 
 to 100%. Ctrl+0, Ctrl+plus and Ctrl+minus act on whichever pane the pointer is over.
 The reader's scroll anchor is preserved across a zoom change, same as across a reload.
 
+### Window placement
+
+Position, size and maximized state persist to their own `window.json` and reapply
+before the window shows. Not part of `session.json`, whose shape deliberately belongs
+to the UI — geometry is the one piece of state only the host can know. A saved
+rectangle that no longer overlaps the virtual desktop (a monitor since unplugged) is
+ignored rather than stranding the window off-screen.
+
 ## Milestones
 
 - **M0 — skeleton.** WPF + WebView2 + Markdig, dark chrome, render the file passed on the
@@ -246,12 +285,15 @@ The reader's scroll anchor is preserved across a zoom change, same as across a r
 - **M4 — outline and find.** Outline scroll-spy and Ctrl+F with match count and
   next/previous. **Done.**
 - **M5 — polish.** `.md` association (HKCU, no admin) and a publish script. **Done.**
-  Recent files still outstanding.
 - **M6 — edit toggle.** Ctrl+E flips a pane between the rendered view and the source,
   Ctrl+S saves. **Done**, using a textarea rather than a vendored editor component.
 - **M7 — standing on its own.** Menu bar, markdown highlighting in edit mode, panel
   controls, an app icon, mermaid diagrams, an unsaved-work guard on exit, reading
-  position remembered across restarts, and an About dialog. **Done.**
+  position remembered across restarts, recent files in the File menu, and an About
+  dialog. **Done.**
+- **M8 — sitting beside an agent.** Tab context menu, tab reordering along the strip,
+  change marks diffed against the version last marked as seen (item-level inside
+  lists) with a View toggle, and the window reopening where it was closed. **Done.**
 
 ### Deferred deliberately
 
@@ -426,6 +468,11 @@ The outline marks the last heading at or above the top of the viewport. Driven b
 pane's own scroll event, throttled with `requestAnimationFrame` — scroll fires far more
 often than the outline needs updating, and reusing the offset comparison already
 written for scroll anchoring avoids a second mechanism doing the same job.
+
+The spy's tolerance must exceed the headings' `scroll-margin-top`, or clicking an
+outline entry lands its heading just past the threshold and the entry above stays
+highlighted. A test pins the constant against the stylesheet so the two cannot drift
+apart silently.
 
 ### Measuring the real window
 

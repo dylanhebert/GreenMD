@@ -32,8 +32,13 @@ Pick GreenMD and tick "always use this app". That is one click, not a bug.
 - **Live reload.** Edit a file in another editor and the view updates, keeping your
   place in the document rather than jumping to the top. If you were reading the bottom,
   it follows the bottom, so you can watch a file being written.
-- **Tabs and splits.** Drag a tab to a pane's edge to split, or to its middle to move it.
-  The same file can sit in two panes with two independent reading positions.
+- **See what changed, not just that it changed.** Every reload is diffed against the
+  version you last marked as seen: rewritten blocks get an amber bar, new ones a green
+  one, deletions a dashed seam — down to individual list items. Marks stay until you
+  dismiss them (Ctrl+M or the header chip), and a View-menu toggle hides them entirely.
+- **Tabs and splits.** Drag a tab to a pane's edge to split, to its middle to move it,
+  or along a tab strip to reorder. Right-click a tab for close options. The same file
+  can sit in two panes with two independent reading positions.
 - **Folders in the sidebar.** Open as many as you like; each is a resizable section.
   New files appear on their own.
 - **Ctrl+P** to jump to any file across every open folder, **Ctrl+F** to search the
@@ -43,6 +48,8 @@ Pick GreenMD and tick "always use this app". That is one click, not a bug.
   no autosave, deliberately.
 - **Mermaid diagrams render.** ` ```mermaid ` fences are drawn rather than shown as
   source, and a diagram that will not parse keeps its source visible with the reason.
+- **The window reopens where you left it**, and the session — tabs, splits, folders,
+  reading positions — comes back with it.
 - Everything reachable by keyboard is also in the menu bar.
 
 ## Dependencies
