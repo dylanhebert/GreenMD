@@ -3,7 +3,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace MarkdownViewer.Host;
+namespace GreenMD.Host;
 
 /// <summary>
 /// One open markdown file. Keyed by absolute path, shared across every pane showing it,

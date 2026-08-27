@@ -1,7 +1,7 @@
 using System.IO;
 using System.Text.Json;
 
-namespace MarkdownViewer.Host;
+namespace GreenMD.Host;
 
 /// <summary>
 /// Persists the window's state between runs: which folder is open, which files are in
@@ -29,7 +29,7 @@ public sealed class SessionStore
     {
         var folder = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "MarkdownViewer");
+            "GreenMD");
         Directory.CreateDirectory(folder);
         _path = Path.Combine(folder, "session.json");
     }

@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MarkdownViewer", "MarkdownViewer\MarkdownViewer.csproj", "{B309A2AC-4498-4855-A093-4B90C42CF5BF}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GreenMD", "GreenMD\GreenMD.csproj", "{B309A2AC-4498-4855-A093-4B90C42CF5BF}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

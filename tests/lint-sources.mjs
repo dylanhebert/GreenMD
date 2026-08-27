@@ -11,7 +11,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const WEB = join(here, "..", "MarkdownViewer", "web");
+const WEB = join(here, "..", "GreenMD", "web");
 
 const failures = [];
 

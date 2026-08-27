@@ -1,10 +1,10 @@
 using System.IO;
 using Microsoft.Web.WebView2.Core;
 
-namespace MarkdownViewer.Host;
+namespace GreenMD.Host;
 
 /// <summary>
-/// Serves doc-local images over the <c>mdasset.local</c> virtual origin.
+/// Serves doc-local images over the <c>greenmd-asset.local</c> virtual origin.
 ///
 /// One interception point rather than a <c>SetVirtualHostNameToFolderMapping</c> per
 /// open folder: mappings are global to the WebView2 and would accumulate as tabs come

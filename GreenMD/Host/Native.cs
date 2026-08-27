@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 
-namespace MarkdownViewer.Host;
+namespace GreenMD.Host;
 
 /// <summary>Win32 interop. Without this the WPF title bar stays light over a dark app.</summary>
 internal static class Native

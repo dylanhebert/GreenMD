@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Generates MarkdownViewer/Assets/app.ico.
+    Generates GreenMD/Assets/app.ico.
 
 .DESCRIPTION
     Draws the icon at every size the Windows shell asks for and packs them into a
@@ -16,7 +16,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $OutputPath = (Join-Path $PSScriptRoot '..\MarkdownViewer\Assets\app.ico')
+    [string] $OutputPath = (Join-Path $PSScriptRoot '..\GreenMD\Assets\app.ico')
 )
 
 Add-Type -AssemblyName System.Drawing

@@ -11,15 +11,11 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const WEB = join(here, "..", "MarkdownViewer", "web") + "/";
+const WEB = join(here, "..", "GreenMD", "web") + "/";
 
-// jsdom is test-only and is deliberately not a dependency of this project -- nothing
-// it pulls in ever ships. Reuse the copy the sibling ConfigEditor tooling
-// already installed, and fall back to a local install if one is ever added here.
-const candidates = [
-  join(here, "package.json"),
-  join(here, "..", "..", "ConfigEditor", "scripts", "package.json")
-];
+// jsdom is test-only. It is declared in tests/package.json and nothing it pulls in
+// ever ships -- the application itself has no JavaScript dependencies at all.
+const candidates = [join(here, "package.json")];
 
 let JSDOM;
 let VirtualConsole;
@@ -33,7 +29,7 @@ for (const candidate of candidates) {
 }
 
 if (!JSDOM) {
-  console.error("jsdom not found. Install it here, or in ConfigEditor/scripts.");
+  console.error("jsdom not found. Run: npm install --prefix tests");
   process.exit(2);
 }
 
@@ -209,9 +205,9 @@ window.eval(`
 check("emptied pane collapsed", $$(".pane").length === 1, `${$$(".pane").length} panes remain`);
 
 // --- association button ---
-send("association", { registered: false, exe: "C:\\app\\MarkdownViewer.exe" });
+send("association", { registered: false, exe: "C:\\app\\GreenMD.exe" });
 check("association offer shown when unregistered", $("#assocButton").hidden === false);
-send("association", { registered: true, exe: "C:\\app\\MarkdownViewer.exe" });
+send("association", { registered: true, exe: "C:\\app\\GreenMD.exe" });
 check("association offer hidden once registered", $("#assocButton").hidden === true);
 
 // --- workspace tree ---

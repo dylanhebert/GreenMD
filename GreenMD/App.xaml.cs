@@ -1,7 +1,7 @@
 using System.Windows;
-using MarkdownViewer.Host;
+using GreenMD.Host;
 
-namespace MarkdownViewer;
+namespace GreenMD;
 
 public partial class App : Application
 {

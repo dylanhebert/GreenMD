@@ -2,7 +2,7 @@ using System.IO;
 using System.IO.Pipes;
 using System.Text;
 
-namespace MarkdownViewer.Host;
+namespace GreenMD.Host;
 
 /// <summary>
 /// Keeps one window per user session. Double-clicking a second .md file hands the path
@@ -11,7 +11,7 @@ namespace MarkdownViewer.Host;
 /// </summary>
 public sealed class SingleInstance : IDisposable
 {
-    private static readonly string Key = $"MarkdownViewer.{Environment.UserName}";
+    private static readonly string Key = $"GreenMD.{Environment.UserName}";
     private static readonly string PipeName = $"{Key}.open";
 
     private readonly Mutex _mutex;

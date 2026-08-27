@@ -1,0 +1,16 @@
+# Build output
+bin/
+obj/
+publish/
+
+# Test tooling (declared in tests/package.json, never shipped)
+node_modules/
+
+# IDE
+.vs/
+*.user
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store

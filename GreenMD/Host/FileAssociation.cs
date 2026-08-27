@@ -2,7 +2,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
 
-namespace MarkdownViewer.Host;
+namespace GreenMD.Host;
 
 /// <summary>
 /// Registers the app as a handler for markdown files under HKCU.
@@ -14,7 +14,7 @@ namespace MarkdownViewer.Host;
 /// </summary>
 public static class FileAssociation
 {
-    private const string ProgId = "MarkdownViewer.Document";
+    private const string ProgId = "GreenMD.Document";
     private const string FriendlyName = "Markdown Document";
     private const string ClassesRoot = @"Software\Classes";
 
@@ -80,7 +80,7 @@ public static class FileAssociation
         var exeName = Path.GetFileName(exe);
         using (var application = Registry.CurrentUser.CreateSubKey($@"{ClassesRoot}\Applications\{exeName}"))
         {
-            application.SetValue("FriendlyAppName", "MarkdownViewer");
+            application.SetValue("FriendlyAppName", "GreenMD");
 
             using (var command = application.CreateSubKey(@"shell\open\command"))
                 command.SetValue(null, open);

@@ -7,7 +7,7 @@ using Markdig.Renderers.Html;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
 
-namespace MarkdownViewer.Host;
+namespace GreenMD.Host;
 
 public sealed record Heading(int Level, string Text, string Id);
 
@@ -29,10 +29,10 @@ public static partial class MarkdownRenderer
         .Build();
 
     /// <summary>Virtual origin for doc-local images, served by <see cref="AssetServer"/>.</summary>
-    public const string AssetHost = "mdasset.local";
+    public const string AssetHost = "greenmd-asset.local";
 
     /// <summary>Virtual origin for links to other local files; the UI turns these into tabs.</summary>
-    public const string OpenHost = "mdopen.local";
+    public const string OpenHost = "greenmd-open.local";
 
     public static RenderedDoc Render(string markdown, string? baseDirectory = null)
     {

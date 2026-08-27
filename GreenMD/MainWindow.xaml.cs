@@ -2,14 +2,14 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
-using MarkdownViewer.Host;
+using GreenMD.Host;
 using Microsoft.Web.WebView2.Core;
 
-namespace MarkdownViewer;
+namespace GreenMD;
 
 public partial class MainWindow : Window
 {
-    private const string AppHost = "mdviewer.app";
+    private const string AppHost = "greenmd.app";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly DocumentStore _documents = new();
@@ -59,7 +59,7 @@ public partial class MainWindow : Window
     {
         var userDataFolder = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MarkdownViewer", "WebView2");
+            "GreenMD", "WebView2");
         Directory.CreateDirectory(userDataFolder);
 
         // Set before init, otherwise the first paint flashes white.
@@ -578,7 +578,7 @@ public partial class MainWindow : Window
     });
 
     private void UpdateTitle(string? documentTitle) =>
-        Title = string.IsNullOrEmpty(documentTitle) ? "MarkdownViewer" : $"{documentTitle} — MarkdownViewer";
+        Title = string.IsNullOrEmpty(documentTitle) ? "GreenMD" : $"{documentTitle} — GreenMD";
 
     private static void OpenExternally(string uri)
     {
@@ -611,7 +611,7 @@ public partial class MainWindow : Window
         Web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type, payload }, JsonOptions));
 
     private const string WelcomeMarkdown = """
-        # MarkdownViewer
+        # GreenMD
 
         No document open.
 

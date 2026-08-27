@@ -779,10 +779,10 @@ panesEl.addEventListener("click", (event) => {
     return;
   }
 
-  if (href.startsWith("https://mdopen.local/")) {
+  if (href.startsWith("https://greenmd-open.local/")) {
     event.preventDefault();
     Layout.setActive(paneId);
-    post("open-file", decodeURIComponent(href.slice("https://mdopen.local/".length).split("#")[0]));
+    post("open-file", decodeURIComponent(href.slice("https://greenmd-open.local/".length).split("#")[0]));
     return;
   }
 

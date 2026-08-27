@@ -1,8 +1,8 @@
-<Window x:Class="MarkdownViewer.MainWindow"
+<Window x:Class="GreenMD.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
-        Title="MarkdownViewer"
+        Title="GreenMD"
         Icon="Assets/app.ico"
         Height="820" Width="1240"
         Background="#FF1E1E1C">

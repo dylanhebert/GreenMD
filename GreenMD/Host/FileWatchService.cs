@@ -1,6 +1,6 @@
 using System.IO;
 
-namespace MarkdownViewer.Host;
+namespace GreenMD.Host;
 
 /// <summary>
 /// Watches open documents for external changes.

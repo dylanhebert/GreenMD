@@ -6,9 +6,26 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <AssemblyName>MarkdownViewer</AssemblyName>
-    <RootNamespace>MarkdownViewer</RootNamespace>
+    <AssemblyName>GreenMD</AssemblyName>
+    <RootNamespace>GreenMD</RootNamespace>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Product>GreenMD</Product>
+    <AssemblyTitle>GreenMD</AssemblyTitle>
+    <Description>A dark-mode markdown viewer for Windows.</Description>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <!--
+    Release output is what people download, so it carries only what it needs: no
+    reference XML documentation from the packages, and no symbols.
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
 
   <ItemGroup>

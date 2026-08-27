@@ -1,6 +1,6 @@
 using System.IO;
 
-namespace MarkdownViewer.Host;
+namespace GreenMD.Host;
 
 /// <summary>One node in a workspace's file tree. Flat, with a parent reference.</summary>
 public sealed record TreeEntry(string Path, string Name, string Parent, bool IsDirectory);
