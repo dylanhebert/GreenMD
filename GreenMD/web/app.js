@@ -25,6 +25,9 @@ let dragging = null;
 
 let welcome = null;
 
+/** Whether the host reports this build as the registered .md handler. */
+let associationRegistered = false;
+
 /** Most-recently-opened paths, newest first. Persisted with the session. */
 let recents = [];
 const RECENT_LIMIT = 25;
@@ -941,7 +944,9 @@ host.addEventListener("message", (event) => {
       break;
 
     case "association":
+      associationRegistered = !!payload.registered;
       assocButtonEl.hidden = payload.registered;
+      Menu.refresh();
       assocButtonEl.title = payload.exe;
       break;
 
@@ -1018,8 +1023,8 @@ host.addEventListener("message", (event) => {
 window.Commands = (() => {
   const map = new Map();
 
-  const define = (id, label, keys, run, available) =>
-    map.set(id, { id, label, keys, run, available });
+  const define = (id, label, keys, run, available, reason) =>
+    map.set(id, { id, label, keys, run, available, reason });
 
   define("openFile", "Open file...", "Ctrl+O", () => post("pick-file"));
   define("addFolder", "Add folder to sidebar...", "Ctrl+K", () => post("pick-folder"));
@@ -1027,22 +1032,28 @@ window.Commands = (() => {
   define("find", "Find in document", "Ctrl+F", openFind);
 
   define("save", "Save", "Ctrl+S", () => saveActive(false),
-    () => { const p = Layout.activePane(); return !!(p && p.active && Editor.isDirty(p.id, p.active)); });
+    () => { const p = Layout.activePane(); return !!(p && p.active && Editor.isDirty(p.id, p.active)); },
+    "Nothing to save — this document has no unsaved changes.");
 
   define("closeTab", "Close tab", "Ctrl+W", () => {
     const pane = Layout.activePane();
     if (pane && pane.active) requestCloseTab(pane.id, pane.active);
-  }, () => { const p = Layout.activePane(); return !!(p && p.active); });
+  }, () => { const p = Layout.activePane(); return !!(p && p.active); },
+    "No document is open in this pane.");
 
   define("closeFolders", "Close all folders", "", () => post("close-workspace"),
-    () => Workspace.hasWorkspace());
+    () => Workspace.hasWorkspace(),
+    "No folders are open. Add one with Ctrl+K.");
 
   define("registerAssociation", "Set as default .md viewer", "",
-    () => post("register-association"));
+    () => post("register-association"),
+    () => !associationRegistered,
+    "GreenMD is already registered as a markdown handler.");
 
   define("toggleSource", "Toggle source editing", "Ctrl+E",
     () => toggleMode(Layout.activePane()),
-    () => { const p = Layout.activePane(); return !!(p && p.active); });
+    () => { const p = Layout.activePane(); return !!(p && p.active); },
+    "Open a document first.");
 
   define("toggleFiles", "Show or hide file list", "Ctrl+B", () => {
     if (!Workspace.hasWorkspace()) { post("pick-folder"); return; }
@@ -1062,9 +1073,11 @@ window.Commands = (() => {
   define("splitDown", "Split pane down", "Ctrl+Shift+\\", () => splitActive("col"));
 
   define("nextTab", "Next tab", "Ctrl+Tab", () => cycleTab(1),
-    () => { const p = Layout.activePane(); return !!p && p.tabs.length > 1; });
+    () => { const p = Layout.activePane(); return !!p && p.tabs.length > 1; },
+    "Only one tab is open in this pane.");
   define("prevTab", "Previous tab", "Ctrl+Shift+Tab", () => cycleTab(-1),
-    () => { const p = Layout.activePane(); return !!p && p.tabs.length > 1; });
+    () => { const p = Layout.activePane(); return !!p && p.tabs.length > 1; },
+    "Only one tab is open in this pane.");
 
   return { get: id => map.get(id), run: id => map.get(id)?.run() };
 })();
@@ -1257,7 +1270,11 @@ Panels.configure({
   onPersist() { saveSession(); }
 });
 
-Menu.configure(Commands);
+Menu.configure(Commands, {
+  onUnavailable(command) {
+    statusTextEl.textContent = command.reason || (command.label + " is not available right now.");
+  }
+});
 
 Layout.mount(panesEl);
 Zoom.applyAll();

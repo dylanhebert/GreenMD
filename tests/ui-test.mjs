@@ -734,6 +734,53 @@ check("a menu item runs its command",
       posted.filter(m => m.type === "pick-file").length === beforeMenuOpen + 1);
 check("choosing an item closes the menu", $$(".menu.open").length === 0);
 
+// Availability. classList.toggle treats an undefined second argument as "no
+// argument" and flips the class, so commands with no availability rule used to
+// flicker between greyed and not on every refresh.
+window.eval("Menu.refresh()");
+window.eval("Menu.refresh()");
+window.eval("Menu.refresh()");
+const alwaysOn = ["openFile", "addFolder", "goToFile", "find", "swapPanels", "resetPaneWidths"];
+const wronglyGreyed = alwaysOn.filter(id =>
+  $(`.menu-item[data-command='${id}']`)?.classList.contains("unavailable"));
+check("commands with no availability rule are never greyed",
+      wronglyGreyed.length === 0, "greyed: " + wronglyGreyed.join(", "));
+
+// And one that genuinely is unavailable still greys, with a reason.
+const saveItem = $(".menu-item[data-command='save']");
+check("save is greyed when there is nothing to save",
+      saveItem?.classList.contains("unavailable") === true);
+check("a greyed item explains itself", (saveItem?.title || "").length > 0, saveItem?.title);
+check("a greyed item is marked disabled for assistive tech",
+      saveItem?.getAttribute("aria-disabled") === "true");
+
+// Clicking a greyed item must not run it, but must say why.
+const beforeGreyClick = posted.length;
+$$(".menu-title")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+saveItem.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("clicking a greyed item does not run the command", posted.length === beforeGreyClick,
+      `${posted.length - beforeGreyClick} messages posted`);
+check("clicking a greyed item explains why in the status bar",
+      ($("#statusText").textContent || "").length > 0, $("#statusText").textContent);
+
+// Hovering away closes the menu after the grace period.
+$$(".menu-title")[1].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("a menu is open before the hover test", $$(".menu.open").length === 1);
+
+$$(".menu")[1].dispatchEvent(new window.MouseEvent("mouseleave", { bubbles: false }));
+check("the menu stays open during the grace period", $$(".menu.open").length === 1);
+
+await new Promise(r => setTimeout(r, window.eval("Menu.closeGraceMs") + 120));
+check("hovering away closes the menu", $$(".menu.open").length === 0);
+
+// Returning within the grace period keeps it open.
+$$(".menu-title")[1].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+$$(".menu")[1].dispatchEvent(new window.MouseEvent("mouseleave", { bubbles: false }));
+$$(".menu")[1].dispatchEvent(new window.MouseEvent("mouseenter", { bubbles: false }));
+await new Promise(r => setTimeout(r, window.eval("Menu.closeGraceMs") + 120));
+check("coming back within the grace period keeps it open", $$(".menu.open").length === 1);
+window.eval("Menu.close()");
+
 // --- panel widths and swapping ---
 window.eval("Panels.resetWidths()");
 const widthOf = name => $(".body").style.getPropertyValue("--" + name + "-width");
