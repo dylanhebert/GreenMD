@@ -27,6 +27,9 @@ let welcome = null;
 /** Whether the host reports this build as the registered .md handler. */
 let associationRegistered = false;
 
+/** Bumped per image refresh, so every asset-updated forces a refetch. */
+let assetVersion = 0;
+
 /** Most-recently-opened paths, newest first. Persisted with the session. */
 let recents = [];
 const RECENT_LIMIT = 25;
@@ -1530,6 +1533,27 @@ host.addEventListener("message", (event) => {
 
       renderAll({ keepAnchors: false });
       syncOpenPaths();
+      break;
+    }
+
+    case "asset-updated": {
+      // An image an open document references changed on disk. Same bytes-fresh
+      // guarantee as text: bump a version query so the browser refetches, leaving
+      // the document itself untouched.
+      const changedAsset = payload.path.toLowerCase();
+      for (const img of panesEl.querySelectorAll(".doc img")) {
+        const src = img.getAttribute("src") || "";
+        if (!src.startsWith("https://greenmd-asset.local/")) continue;
+
+        let decoded;
+        try {
+          decoded = decodeURIComponent(
+            src.slice("https://greenmd-asset.local/".length).split("?")[0]);
+        } catch { continue; }
+
+        if (decoded.toLowerCase() !== changedAsset) continue;
+        img.src = src.split("?")[0] + "?v=" + (++assetVersion);
+      }
       break;
     }
 

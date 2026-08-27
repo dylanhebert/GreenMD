@@ -15,8 +15,11 @@ public sealed record Heading(int Level, string Text, string Id);
 /// <paramref name="TaskOffsets"/> holds the source offset of each task-list marker, in
 /// document order, so a checkbox clicked in the rendered view can be flipped in the
 /// markdown itself. The offset points at the opening bracket of <c>[ ]</c>.
+/// <paramref name="Assets"/> holds the absolute paths of the doc-local images the
+/// rendered HTML references, so the host can watch them for live reload.
 /// </summary>
-public sealed record RenderedDoc(string Html, IReadOnlyList<Heading> Outline, IReadOnlyList<int> TaskOffsets);
+public sealed record RenderedDoc(
+    string Html, IReadOnlyList<Heading> Outline, IReadOnlyList<int> TaskOffsets, IReadOnlyList<string> Assets);
 
 /// <summary>
 /// Markdown to HTML, plus the heading outline. Both come from a single parse:
@@ -38,8 +41,9 @@ public static partial class MarkdownRenderer
     {
         var document = Markdown.Parse(markdown, Pipeline);
 
-        if (!string.IsNullOrEmpty(baseDirectory))
-            RewriteLocalLinks(document, baseDirectory);
+        List<string> assets = string.IsNullOrEmpty(baseDirectory)
+            ? []
+            : RewriteLocalLinks(document, baseDirectory);
 
         var outline = document.Descendants<HeadingBlock>()
             .Select(h => new Heading(h.Level, InlineText(h.Inline), h.GetAttributes().Id ?? string.Empty))
@@ -66,7 +70,8 @@ public static partial class MarkdownRenderer
         return new RenderedDoc(
             Sanitize(writer.ToString()),
             outline,
-            tasks.Select(task => task.Span.Start).ToList());
+            tasks.Select(task => task.Span.Start).ToList(),
+            assets);
     }
 
     private sealed class InteractiveTaskListRenderer(Dictionary<TaskList, int> indexes)
@@ -94,12 +99,15 @@ public static partial class MarkdownRenderer
     }
 
     /// <summary>
-    /// Points relative images and local file links at virtual origins the host serves.
+    /// Points relative images and local file links at virtual origins the host serves,
+    /// and returns the resolved image paths for the caller to watch.
     /// Rewriting on the AST rather than the emitted HTML means image and link syntax are
     /// handled by the same rule, and there is no regex chasing quoting in attributes.
     /// </summary>
-    private static void RewriteLocalLinks(MarkdownDocument document, string baseDirectory)
+    private static List<string> RewriteLocalLinks(MarkdownDocument document, string baseDirectory)
     {
+        var assets = new List<string>();
+
         foreach (var link in document.Descendants<LinkInline>())
         {
             var url = link.Url;
@@ -127,11 +135,14 @@ public static partial class MarkdownRenderer
                 var resolved = Path.GetFullPath(Path.Combine(baseDirectory, Uri.UnescapeDataString(target)));
                 var host = link.IsImage ? AssetHost : OpenHost;
                 link.Url = $"https://{host}/{Uri.EscapeDataString(resolved)}{fragment}";
+                if (link.IsImage) assets.Add(resolved);
             }
             catch (ArgumentException) { /* not a usable path; leave the link as authored */ }
             catch (NotSupportedException) { }
             catch (PathTooLongException) { }
         }
+
+        return assets;
     }
 
     private static string InlineText(ContainerInline? container)

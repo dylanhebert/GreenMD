@@ -1594,6 +1594,35 @@ check("diff hunk headers are highlighted",
       mScroller().querySelector("code .hl-meta")?.textContent === "@@ hunk @@");
 check("the fence is labelled diff", mScroller().querySelector("pre")?.dataset.lang === "diff");
 
+// --- live-reload images ---
+const IMG = "C:" + SEP + "docs" + SEP + "chart.png";
+const IMG_SRC = "https://greenmd-asset.local/" + encodeURIComponent(IMG);
+send("doc-updated", markPayload(
+  '<h1 id="w">W</h1><p><img src="' + IMG_SRC + '" alt="chart"></p>'
+  + '<p><img src="https://example.com/remote.png" alt="remote"></p>'));
+key("m", { ctrlKey: true });
+
+const localImg = () => mScroller().querySelector('img[alt="chart"]');
+send("asset-updated", { path: IMG });
+check("a changed image is refetched with a version bump",
+      (localImg()?.getAttribute("src") || "").startsWith(IMG_SRC + "?v="),
+      localImg()?.getAttribute("src"));
+check("a remote image is left alone",
+      mScroller().querySelector('img[alt="remote"]')?.getAttribute("src")
+      === "https://example.com/remote.png");
+
+const firstBust = localImg().getAttribute("src");
+send("asset-updated", { path: IMG.toUpperCase() });
+check("a second change busts the cache again, case-insensitively",
+      localImg().getAttribute("src") !== firstBust
+      && localImg().getAttribute("src").startsWith(IMG_SRC + "?v="),
+      localImg().getAttribute("src"));
+
+const beforeUnrelated = localImg().getAttribute("src");
+send("asset-updated", { path: "C:" + SEP + "docs" + SEP + "other.png" });
+check("an unrelated image change touches nothing",
+      localImg().getAttribute("src") === beforeUnrelated);
+
 // --- report ---
 console.log("");
 for (const r of results) {

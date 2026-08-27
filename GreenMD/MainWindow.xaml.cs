@@ -16,6 +16,12 @@ public partial class MainWindow : Window
     private readonly DocumentStore _documents = new();
     private readonly FileWatchService _watcher = new();
     private readonly AssetServer _assets = new();
+
+    /// <summary>Watches the images open documents reference, so a regenerated chart
+    /// refreshes in place. Same machinery as document watching, separate instance --
+    /// an image change refreshes pixels, never a document reload.</summary>
+    private readonly FileWatchService _assetWatcher = new();
+    private readonly HashSet<string> _watchedAssets = new(StringComparer.OrdinalIgnoreCase);
     private readonly WorkspaceService _workspace = new();
     private readonly SessionStore _session = new();
 
@@ -48,10 +54,12 @@ public partial class MainWindow : Window
         {
             _session.Flush();
             _watcher.Dispose();
+            _assetWatcher.Dispose();
             _workspace.Dispose();
         };
 
         _watcher.Changed += OnFileChanged;
+        _assetWatcher.Changed += OnAssetChanged;
         _workspace.TreeChanged += OnWorkspaceTreeChanged;
         Loaded += OnLoadedAsync;
     }
@@ -337,6 +345,7 @@ public partial class MainWindow : Window
 
             var placeholder = await _documents.LoadAsync(full);
             _watcher.Watch(full);
+            SyncAssetWatches();
             return placeholder;
         }
 
@@ -347,7 +356,44 @@ public partial class MainWindow : Window
 
         var document = await _documents.LoadAsync(full);
         _watcher.Watch(full);
+        SyncAssetWatches();
         return document;
+    }
+
+    /// <summary>
+    /// Reconciles the asset watcher against the images every open document currently
+    /// references. Called whenever a document loads, reloads, saves or closes -- the
+    /// only times the referenced set can change.
+    /// </summary>
+    private void SyncAssetWatches()
+    {
+        var wanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in _documents.OpenPaths)
+        {
+            var document = _documents.Get(path);
+            if (document is null) continue;
+            foreach (var asset in document.Assets) wanted.Add(asset);
+        }
+
+        foreach (var stale in _watchedAssets.Where(asset => !wanted.Contains(asset)).ToList())
+        {
+            _assetWatcher.Unwatch(stale);
+            _watchedAssets.Remove(stale);
+        }
+
+        foreach (var asset in wanted)
+        {
+            if (_watchedAssets.Add(asset)) _assetWatcher.Watch(asset);
+        }
+    }
+
+    private void OnAssetChanged(string path)
+    {
+        Dispatcher.InvokeAsync(() =>
+        {
+            LogState($"asset changed {Path.GetFileName(path)}");
+            Post("asset-updated", new { path });
+        });
     }
 
     // ---------- editing ----------
@@ -386,6 +432,7 @@ public partial class MainWindow : Window
 
         var document = _documents.Get(path);
         if (document is not null) Post("doc-updated", Describe(document));
+        SyncAssetWatches();
     }
 
     /// <summary>
@@ -453,6 +500,8 @@ public partial class MainWindow : Window
             _watcher.Unwatch(path);
             _documents.Remove(path);
         }
+
+        SyncAssetWatches();
     }
 
     // ---------- workspaces ----------
@@ -571,6 +620,7 @@ public partial class MainWindow : Window
 
             LogState($"host posting doc-updated for {Path.GetFileName(path)} hash={document.Hash[..8]}");
             Post("doc-updated", Describe(document));
+            SyncAssetWatches();
         });
     }
 

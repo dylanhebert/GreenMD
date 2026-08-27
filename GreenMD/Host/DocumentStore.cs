@@ -32,6 +32,9 @@ public sealed class Document
     /// <summary>Source offsets of each task-list marker, in document order.</summary>
     public IReadOnlyList<int> TaskOffsets { get; set; } = [];
 
+    /// <summary>Absolute paths of the doc-local images the rendered HTML references.</summary>
+    public IReadOnlyList<string> Assets { get; set; } = [];
+
     public string LineEnding { get; set; } = "\r\n";
 }
 
@@ -103,6 +106,7 @@ public sealed class DocumentStore
             document.Hash = string.Empty;
             document.Html = MissingHtml(document.Path);
             document.Outline = [];
+            document.Assets = [];
             document.LoadedAt = DateTimeOffset.Now;
             return;
         }
@@ -122,6 +126,7 @@ public sealed class DocumentStore
         document.Html = rendered.Html;
         document.Outline = rendered.Outline;
         document.TaskOffsets = rendered.TaskOffsets;
+        document.Assets = rendered.Assets;
     }
 
     /// <summary>
@@ -199,6 +204,7 @@ public sealed class DocumentStore
         document.Html = rendered.Html;
         document.Outline = rendered.Outline;
         document.TaskOffsets = rendered.TaskOffsets;
+        document.Assets = rendered.Assets;
 
         return (true, false);
     }
