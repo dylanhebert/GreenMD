@@ -49,6 +49,7 @@ const listeners = [];
 window.chrome = {
   webview: {
     postMessage: m => posted.push(m),
+    postMessageWithAdditionalObjects: (m, objects) => posted.push({ ...m, objects }),
     addEventListener: (_, fn) => listeners.push(fn)
   }
 };
@@ -1239,6 +1240,42 @@ check("clicking a recent entry asks the host to open it",
       posted.filter(m => m.type === "open-file").length === beforeRecentOpen + 1
       && posted.filter(m => m.type === "open-file").pop()?.payload === RECENT_B,
       JSON.stringify(posted.filter(m => m.type === "open-file").pop()?.payload));
+
+// --- drops from outside the app ---
+// jsdom has no native drag, so these drive the handlers with hand-built events. The
+// real gate (WebView2's AllowExternalDrop) is untestable here; this covers the JS.
+
+function dragEvent(type, dataTransfer) {
+  const event = new window.Event(type, { bubbles: true, cancelable: true });
+  event.dataTransfer = dataTransfer;
+  return event;
+}
+
+const externalOver = dragEvent("dragover", { types: ["Files"], dropEffect: "" });
+($(".pane") || window.document.body).dispatchEvent(externalOver);
+check("an external file drag over the page is accepted",
+      externalOver.defaultPrevented);
+check("an external drag paints no pane drop hints",
+      $$(".pane[class*=drop-]").length === 0);
+
+const droppedFiles = [{ name: "notes.md" }, { name: "folder" }];
+const externalDrop = dragEvent("drop", { types: ["Files"], files: droppedFiles });
+window.document.body.dispatchEvent(externalDrop);
+const droppedMsg = posted.filter(m => m.type === "dropped-files").pop();
+check("dropping external files posts dropped-files",
+      externalDrop.defaultPrevented && !!droppedMsg);
+check("the dropped file objects ride along for the host to read paths from",
+      droppedMsg?.objects?.length === 2 && droppedMsg.objects[0].name === "notes.md",
+      JSON.stringify(droppedMsg?.objects));
+
+// A tab drag in progress must not be mistaken for an external drop.
+const dragTab = $(".tab");
+dragTab.dispatchEvent(dragEvent("dragstart", { setData: () => {}, effectAllowed: "" }));
+const duringTabDrag = dragEvent("drop", { types: ["Files"], files: [{ name: "x.md" }] });
+window.document.body.dispatchEvent(duringTabDrag);
+check("a drop during a tab drag posts no dropped-files",
+      posted.filter(m => m.type === "dropped-files").length === 1);
+dragTab.dispatchEvent(dragEvent("dragend", {}));
 
 // --- report ---
 console.log("");

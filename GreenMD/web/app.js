@@ -888,6 +888,23 @@ panesEl.addEventListener("drop", (event) => {
   syncOpenPaths();
 });
 
+// ---------- drops from outside the app ----------
+
+// Explorer drops are accepted by the page, not by WPF: routing them through WPF
+// (AllowExternalDrop=false) also suppressed the page's own tab drags in the WPF
+// host. postMessageWithAdditionalObjects hands the host each file's real path.
+document.addEventListener("dragover", (event) => {
+  if (dragging || !event.dataTransfer?.types?.includes("Files")) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+});
+
+document.addEventListener("drop", (event) => {
+  if (dragging || !event.dataTransfer?.types?.includes("Files")) return;
+  event.preventDefault();
+  host.postMessageWithAdditionalObjects({ type: "dropped-files", payload: null }, [...event.dataTransfer.files]);
+});
+
 // ---------- clicks inside panes ----------
 
 panesEl.addEventListener("change", (event) => {

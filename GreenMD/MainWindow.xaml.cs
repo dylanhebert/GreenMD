@@ -35,15 +35,11 @@ public partial class MainWindow : Window
         InitializeComponent();
         Native.UseDarkTitleBar(this);
 
-        AllowDrop = true;
-
-        // WebView2 would otherwise consume file drops itself and hand the page File
-        // objects with no usable path. Letting WPF handle them keeps the real path,
-        // which is what the watcher needs.
-        Web.AllowExternalDrop = false;
-
-        Drop += OnDrop;
-        DragOver += OnDragOver;
+        // Routing Explorer drops through WPF (AllowExternalDrop=false) kept their
+        // real paths, but in the WPF host it also suppressed the page's own tab
+        // drags. So the page accepts drops itself and posts "dropped-files" via
+        // postMessageWithAdditionalObjects, which preserves each file's path.
+        Web.AllowExternalDrop = true;
 
         Closing += OnClosing;
 
@@ -161,6 +157,17 @@ public partial class MainWindow : Window
             case "open-workspace":
                 if (payload.ValueKind == JsonValueKind.String)
                     OpenWorkspace(payload.GetString()!);
+                break;
+
+            case "dropped-files":
+                // Sent with postMessageWithAdditionalObjects; each object is a
+                // CoreWebView2File carrying the dropped file's real path.
+                foreach (var dropped in e.AdditionalObjects ?? Enumerable.Empty<object>())
+                {
+                    if (dropped is not CoreWebView2File file) continue;
+                    if (Directory.Exists(file.Path)) OpenWorkspace(file.Path);
+                    else await OpenAsync(file.Path);
+                }
                 break;
 
             case "close-workspace":
@@ -560,25 +567,6 @@ public partial class MainWindow : Window
             LogState($"host posting doc-updated for {Path.GetFileName(path)} hash={document.Hash[..8]}");
             Post("doc-updated", Describe(document));
         });
-    }
-
-    // ---------- drag and drop ----------
-
-    private static void OnDragOver(object sender, DragEventArgs e)
-    {
-        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
-        e.Handled = true;
-    }
-
-    private async void OnDrop(object sender, DragEventArgs e)
-    {
-        if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths) return;
-
-        foreach (var path in paths)
-        {
-            if (Directory.Exists(path)) OpenWorkspace(path);
-            else await OpenAsync(path);
-        }
     }
 
     // ---------- helpers ----------
