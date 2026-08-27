@@ -1,7 +1,8 @@
-# Vendored third-party files are byte-exact artifacts, verified against a recorded
-# SHA-256. Git's line-ending normalisation would rewrite them on checkout and break
-# that check on any fresh clone -- which is exactly what happened once.
-GreenMD/web/vendor/** -text
-
-# Everything else may be normalised normally.
+# Order matters here: later rules win, so the general default comes first and the
+# specific exception after it.
 * text=auto
+
+# Vendored third-party files are byte-exact artifacts, verified against a recorded
+# SHA-256. Line-ending normalisation would rewrite them on checkout and break that
+# check on any fresh clone -- which is exactly what happened once.
+GreenMD/web/vendor/** -text
