@@ -114,4 +114,4 @@ The first measures the real window — computed styles, every box, and a verdict
 exits. The second stays open and streams what the host is watching and what the UI
 holds, so "the event never arrived" can be told apart from "the UI ignored it".
 
-See [DESIGN.md](DESIGN.md) for how it is put together and why.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for how it is put together and why.
