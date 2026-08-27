@@ -536,8 +536,8 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .hl-attr      { color: #61afef; }
 .hl-builtin   { color: #61afef; }
 .hl-meta      { color: #8b8880; }
-.hl-addition  { color: #98c379; }
-.hl-deletion  { color: #e06c75; }
+.hl-addition  { color: #98c379; background: rgba(152, 195, 121, .1); }
+.hl-deletion  { color: #e06c75; background: rgba(224, 108, 117, .1); }
 
 
 /* ---------- workspace sidebar ---------- */

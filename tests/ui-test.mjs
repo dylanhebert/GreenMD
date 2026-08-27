@@ -1582,6 +1582,18 @@ check("removed items leave a seam inside the list",
       mChip().textContent);
 key("m", { ctrlKey: true });
 
+// --- diff fences ---
+send("doc-updated", markPayload(
+  '<h1 id="w">W</h1><pre><code class="language-diff">+ added line\n- removed line\n@@ hunk @@</code></pre>'));
+key("m", { ctrlKey: true });
+check("diff additions are highlighted",
+      mScroller().querySelector("code .hl-addition")?.textContent === "+ added line");
+check("diff deletions are highlighted",
+      mScroller().querySelector("code .hl-deletion")?.textContent === "- removed line");
+check("diff hunk headers are highlighted",
+      mScroller().querySelector("code .hl-meta")?.textContent === "@@ hunk @@");
+check("the fence is labelled diff", mScroller().querySelector("pre")?.dataset.lang === "diff");
+
 // --- report ---
 console.log("");
 for (const r of results) {
