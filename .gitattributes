@@ -1,0 +1,7 @@
+# Vendored third-party files are byte-exact artifacts, verified against a recorded
+# SHA-256. Git's line-ending normalisation would rewrite them on checkout and break
+# that check on any fresh clone -- which is exactly what happened once.
+GreenMD/web/vendor/** -text
+
+# Everything else may be normalised normally.
+* text=auto
