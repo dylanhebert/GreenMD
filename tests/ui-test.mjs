@@ -1450,6 +1450,112 @@ check("a cross-pane strip drop inserts at the pointer",
       crossOrders.some(o => JSON.stringify(o) === JSON.stringify([RE2, RE3])),
       JSON.stringify(crossOrders));
 
+// --- change marks ---
+const MARK = "C:" + SEP + "docs" + SEP + "watched.md";
+function markPayload(html) {
+  return { path: MARK, title: "watched.md", folder: "C:" + SEP + "docs",
+           html, outline: [], missing: false, loadedAt: new Date().toISOString() };
+}
+const mScroller = () => tabFor(MARK).closest(".pane").querySelector(".doc");
+const mChip = () => tabFor(MARK).closest(".pane").querySelector(".dochead-changes");
+
+send("doc-opened", markPayload('<h1 id="w">W</h1><p>alpha</p><p>omega</p>'));
+check("a fresh document carries no change marks",
+      mScroller().querySelectorAll(".changed-block, .added-block, .removed-mark").length === 0
+      && mChip().hidden === true);
+
+send("doc-updated", markPayload('<h1 id="w">W</h1><p>alpha</p><p>beta</p><p>omega</p>'));
+const added = [...mScroller().querySelectorAll(".added-block")];
+check("an added block is marked as added", added.length === 1 && added[0].textContent === "beta"
+      && mScroller().querySelectorAll(".changed-block").length === 0,
+      added.map(b => b.textContent).join(" | "));
+check("the header counts the change",
+      mChip().hidden === false && mChip().textContent.startsWith("1 change"),
+      mChip().textContent);
+
+// The second reload diffs against the same baseline, not the previous render.
+send("doc-updated", markPayload('<h1 id="w">W</h1><p>alpha!</p><p>beta</p><p>omega</p>'));
+const rewritten = [...mScroller().querySelectorAll(".changed-block")];
+check("a rewritten block is marked as changed, separately from the added one",
+      rewritten.length === 1 && rewritten[0].textContent === "alpha!"
+      && mScroller().querySelectorAll(".added-block").length === 1,
+      rewritten.map(b => b.textContent).join(" | "));
+check("marks accumulate across reloads until dismissed",
+      mChip().textContent.startsWith("2 changes"), mChip().textContent);
+check("a rewritten block shows no removal seam",
+      mScroller().querySelectorAll(".removed-mark").length === 0);
+
+// Dismiss, then delete a block: the seam sits where the content was.
+mChip().dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("mark seen clears the marks",
+      mScroller().querySelectorAll(".changed-block, .added-block, .removed-mark").length === 0
+      && mChip().hidden === true);
+
+send("doc-updated", markPayload('<h1 id="w">W</h1><p>beta</p><p>omega</p>'));
+check("a removed block leaves a seam where it was",
+      mScroller().querySelectorAll(".removed-mark").length === 1
+      && mChip().textContent.startsWith("1 change"), mChip().textContent);
+
+// Ctrl+M is the keyboard route to the same dismissal.
+key("m", { ctrlKey: true });
+check("Ctrl+M marks changes as seen",
+      mScroller().querySelectorAll(".changed-block, .added-block, .removed-mark").length === 0
+      && mChip().hidden === true);
+
+// Changes after a dismissal are marked alone, against the new baseline.
+send("doc-updated", markPayload('<h1 id="w">W</h1><p>beta</p><p>omega</p><p>coda</p>'));
+check("new changes after dismissal are marked alone",
+      [...mScroller().querySelectorAll(".added-block")].map(b => b.textContent).join("|") === "coda"
+      && mChip().textContent.startsWith("1 change"), mChip().textContent);
+key("m", { ctrlKey: true });
+
+// The reader's own checkbox tick must not read as an external change.
+send("doc-updated", markPayload('<h1 id="w">W</h1><ul><li><input class="task" data-task="0" type="checkbox"> item</li></ul>'));
+key("m", { ctrlKey: true });
+const mBox = mScroller().querySelector("input.task");
+mBox.checked = true;
+mBox.dispatchEvent(new window.Event("change", { bubbles: true }));
+send("doc-updated", markPayload('<h1 id="w">W</h1><ul><li><input class="task" data-task="0" type="checkbox" checked> item</li></ul>'));
+check("the reader's own checkbox tick leaves no marks",
+      mScroller().querySelectorAll(".changed-block, .added-block, .removed-mark").length === 0
+      && mChip().hidden === true);
+
+check("mark-as-seen is in the Edit menu",
+      !!$$(".menu-item").find(i => i.dataset.command === "clearChangeMarks"));
+
+// The View menu hides the marks wholesale; tracking continues underneath.
+send("doc-updated", markPayload('<h1 id="w">W</h1><p>tail</p>'));
+check("marks exist before the visibility test", mChip().hidden === false);
+
+const toggleMarks = $$(".menu-item").find(i => i.dataset.command === "toggleChangeMarks");
+check("the change-marks toggle is in the View menu", !!toggleMarks);
+
+toggleMarks.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("hiding change marks clears the paint",
+      mScroller().querySelectorAll(".changed-block, .added-block, .removed-mark").length === 0
+      && mChip().hidden === true);
+
+// Ctrl+M while hidden must not silently discard what has accumulated.
+key("m", { ctrlKey: true });
+
+send("doc-updated", markPayload('<h1 id="w">W</h1><p>tail</p><p>coda2</p>'));
+check("updates while hidden stay unpainted",
+      mScroller().querySelectorAll(".changed-block, .added-block, .removed-mark").length === 0);
+
+toggleMarks.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("re-enabling shows everything accumulated while hidden",
+      mScroller().querySelectorAll(".changed-block, .added-block, .removed-mark").length >= 2
+      && mChip().hidden === false, mChip().textContent);
+
+// The choice rides with the session.
+toggleMarks.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await new Promise(r => setTimeout(r, 500));
+const sessionOff = posted.filter(m => m.type === "save-session").pop();
+check("the visibility choice is persisted with the session",
+      sessionOff?.payload?.changeMarksVisible === false);
+toggleMarks.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+key("m", { ctrlKey: true });
+
 // --- report ---
 console.log("");
 for (const r of results) {

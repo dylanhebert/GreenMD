@@ -10,6 +10,8 @@
   --text-muted: #6f6d67;
   --accent: #7f77dd;
   --live: #01a982;
+  --changed: #d0a13f;   /* change marks: amber for rewritten blocks */
+  --added: #5ca94f;     /* change marks: green for new blocks -- leafier than --live so the two never blur */
   --code-bg: #151513;
 }
 
@@ -289,6 +291,48 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 }
 
 .doc > :first-child { margin-top: 0; }
+
+/* ---------- change marks ---------- */
+
+/* Blocks touched since the reader last marked the document as seen: amber for a
+   rewrite, green for brand-new content. The bar hangs in the doc's side padding
+   via a positioned pseudo-element, so the block's own box -- list padding
+   included -- is left alone. ::after, because pre already uses ::before for its
+   language label. */
+.doc > .changed-block,
+.doc > .added-block { position: relative; }
+
+.doc > .changed-block::after,
+.doc > .added-block::after {
+  content: "";
+  position: absolute;
+  left: -16px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 2px;
+}
+.doc > .changed-block::after { background: var(--changed); }
+.doc > .added-block::after   { background: var(--added); }
+
+/* Where content was removed: a dashed seam between the blocks either side. */
+.doc > .removed-mark {
+  height: 0;
+  margin: 12px 0;
+  border-top: 2px dashed #b0605f;
+}
+
+.dochead-changes {
+  padding: 1px 8px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--changed);
+  background: transparent;
+  border: 1px solid var(--changed);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.dochead-changes:hover { background: rgba(208, 161, 63, .12); }
 
 .doc h1, .doc h2, .doc h3, .doc h4, .doc h5, .doc h6 {
   font-weight: 600;

@@ -39,7 +39,9 @@ window.Menu = (() => {
         { command: "toggleSource" },
         { command: "save" },
         { separator: true },
-        { command: "find" }
+        { command: "find" },
+        { separator: true },
+        { command: "clearChangeMarks" }
       ]
     },
     {
@@ -47,6 +49,7 @@ window.Menu = (() => {
       items: [
         { command: "toggleFiles" },
         { command: "toggleOutline" },
+        { command: "toggleChangeMarks" },
         { command: "swapPanels" },
         { separator: true },
         { command: "resetPaneWidths" },

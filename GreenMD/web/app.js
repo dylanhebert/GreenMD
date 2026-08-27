@@ -323,6 +323,7 @@ function paintDoc(pane) {
   scroller.innerHTML = doc.html;
   HL.highlightAll(scroller);
   addCopyButtons(scroller);
+  applyChangeMarks(scroller, pane.active);
   renderMermaid(scroller);
   restoreAnchor(scroller, pane.anchors[pane.active]);
 
@@ -426,6 +427,15 @@ function buildHeader(pane) {
   unsaved.textContent = "unsaved — Ctrl+S";
   unsaved.hidden = !(pane.active && Editor.isDirty(pane.id, pane.active));
 
+  const changes = document.createElement("button");
+  changes.className = "dochead-changes";
+  changes.type = "button";
+  changes.title = "Changed since you last marked this document seen. Click to mark seen (Ctrl+M).";
+  changes.addEventListener("click", () => { if (pane.active) dismissChangeMarks(pane.active); });
+  const marks = changeMarksVisible && pane.active ? changeMarks.get(pane.active) : null;
+  changes.hidden = !marks;
+  if (marks) changes.textContent = changeChipText(marks);
+
   const updated = document.createElement("span");
   updated.className = "dochead-updated";
   updated.dataset.updated = doc ? doc.loadedAt : "";
@@ -444,7 +454,7 @@ function buildHeader(pane) {
   badge.setAttribute("data-zoom-badge", "");
   badge.title = "Reset text size to 100%";
 
-  meta.append(unsaved, updated, mode, badge);
+  meta.append(unsaved, changes, updated, mode, badge);
   header.append(id, meta);
   return header;
 }
@@ -754,6 +764,162 @@ function renderAll({ keepAnchors = true, save = true } = {}) {
   Menu.refresh();
 }
 
+// ---------- change marks ----------
+//
+// Built for watching an agent rewrite a document: every reload is diffed against
+// the version the reader last marked as seen -- not the previous render -- so marks
+// accumulate until they are dismissed on purpose. Nothing fades on its own.
+
+/** path -> the rendered html the reader last marked as seen. */
+const changeBaselines = new Map();
+
+/** path -> { changed: Set<blockIndex>, removedBefore: Set<blockIndex>, count } */
+const changeMarks = new Map();
+
+/** Paths whose next update is this app's own write (save, checkbox), not news. */
+const selfChanged = new Set();
+
+/**
+ * Display toggle, persisted with the session. Tracking continues while hidden, so
+ * turning marks back on shows everything accumulated since the last dismissal.
+ */
+let changeMarksVisible = true;
+
+function setChangeMarksVisible(visible) {
+  if (changeMarksVisible === visible) return;
+  changeMarksVisible = visible;
+  rememberAnchors();
+  renderAll({ keepAnchors: false });
+  statusTextEl.textContent = visible
+    ? "Change marks shown."
+    : "Change marks hidden — tracking continues in the background.";
+}
+
+function blocksOf(html) {
+  const holder = document.createElement("template");
+  holder.innerHTML = html;
+  return [...holder.content.children].map(el => el.outerHTML);
+}
+
+/** Block-level diff, in new-side indexes: rewritten blocks, added blocks, removal points. */
+function diffBlocks(oldBlocks, newBlocks) {
+  // Edits are usually local; trimming the common ends keeps the quadratic core small.
+  let start = 0;
+  while (start < oldBlocks.length && start < newBlocks.length
+         && oldBlocks[start] === newBlocks[start]) start++;
+
+  let oldEnd = oldBlocks.length, newEnd = newBlocks.length;
+  while (oldEnd > start && newEnd > start
+         && oldBlocks[oldEnd - 1] === newBlocks[newEnd - 1]) { oldEnd--; newEnd--; }
+
+  const rows = oldEnd - start, cols = newEnd - start;
+  const lcs = Array.from({ length: rows + 1 }, () => new Array(cols + 1).fill(0));
+  for (let i = rows - 1; i >= 0; i--) {
+    for (let j = cols - 1; j >= 0; j--) {
+      lcs[i][j] = oldBlocks[start + i] === newBlocks[start + j]
+        ? lcs[i + 1][j + 1] + 1
+        : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+
+  // Consecutive edits form a run. Within one, inserts pair off against deletes as
+  // rewrites, the surplus inserts are additions, and surplus deletes leave one
+  // removal seam at the top of the run.
+  const modified = new Set(), added = new Set(), removedBefore = new Set();
+  let runStart = null, runDeletes = 0;
+  const runInserts = [];
+
+  const closeRun = () => {
+    if (runStart === null) return;
+    const pairs = Math.min(runDeletes, runInserts.length);
+    runInserts.forEach((index, n) => (n < pairs ? modified : added).add(index));
+    if (runDeletes > pairs) removedBefore.add(runStart);
+    runStart = null; runDeletes = 0; runInserts.length = 0;
+  };
+
+  let i = 0, j = 0;
+  while (i < rows && j < cols) {
+    if (oldBlocks[start + i] === newBlocks[start + j]) { closeRun(); i++; j++; continue; }
+    if (runStart === null) runStart = start + j;
+    if (lcs[i + 1][j] >= lcs[i][j + 1]) { runDeletes++; i++; }
+    else { runInserts.push(start + j); j++; }
+  }
+  while (j < cols) { if (runStart === null) runStart = start + j; runInserts.push(start + j); j++; }
+  if (i < rows) { if (runStart === null) runStart = start + j; runDeletes += rows - i; }
+  closeRun();
+
+  return { modified, added, removedBefore,
+           count: modified.size + added.size + removedBefore.size };
+}
+
+function noteDocChanged(path, html) {
+  if (selfChanged.delete(path)) {
+    // The reader's own save or checkbox tick is not news to them.
+    changeBaselines.set(path, html);
+    changeMarks.delete(path);
+    return;
+  }
+
+  const baseline = changeBaselines.get(path);
+  if (baseline === undefined) { changeBaselines.set(path, html); return; }
+  if (baseline === html) { changeMarks.delete(path); return; }
+
+  changeMarks.set(path, diffBlocks(blocksOf(baseline), blocksOf(html)));
+}
+
+function dismissChangeMarks(path) {
+  const doc = docs.get(path);
+  if (!doc) return;
+
+  changeBaselines.set(path, doc.html);
+  changeMarks.delete(path);
+
+  for (const pane of Layout.panesShowing(path)) {
+    if (pane.active !== path) continue;
+    const scroller = docElementOf(pane);
+    if (scroller) pane.anchors[path] = captureAnchor(scroller);
+    paintDoc(pane);
+  }
+  refreshChangeChips();
+  Menu.refresh();
+}
+
+/** Paints the marks onto a freshly rendered document. Called from paintDoc. */
+function applyChangeMarks(scroller, path) {
+  if (!changeMarksVisible) return;
+  const marks = changeMarks.get(path);
+  if (!marks) return;
+
+  const blocks = [...scroller.children];
+  for (const index of marks.modified) blocks[index]?.classList.add("changed-block");
+  for (const index of marks.added) blocks[index]?.classList.add("added-block");
+
+  for (const index of marks.removedBefore) {
+    const seam = document.createElement("div");
+    seam.className = "removed-mark";
+    seam.title = "Content that was here has been removed";
+    if (index < blocks.length) scroller.insertBefore(seam, blocks[index]);
+    else scroller.append(seam);
+  }
+}
+
+function changeChipText(marks) {
+  return marks.count === 1 ? "1 change — mark seen" : marks.count + " changes — mark seen";
+}
+
+/** Updates every pane's chip in place, so a reload does not rebuild the header. */
+function refreshChangeChips() {
+  for (const pane of Layout.panes()) {
+    const chip = panesEl.querySelector(
+      `[data-pane-id="${CSS.escape(pane.id)}"] .dochead-changes`);
+    if (!chip) continue;
+
+    const marks = changeMarksVisible && pane.active ? changeMarks.get(pane.active) : null;
+    chip.hidden = !marks;
+    if (marks) chip.textContent = changeChipText(marks);
+  }
+}
+
 // ---------- outline ----------
 
 // A clicked outline entry lands its heading scroll-margin-top (styles.css) below
@@ -958,6 +1124,7 @@ panesEl.addEventListener("change", (event) => {
   const pane = paneEl ? Layout.pane(paneEl.dataset.paneId) : null;
   if (!pane || !pane.active) return;
 
+  selfChanged.add(pane.active);
   post("toggle-task", {
     path: pane.active,
     index: Number(box.dataset.task),
@@ -1157,6 +1324,7 @@ function restoreSession(state) {
 
   if (state.panels) Panels.restore(state.panels);
   if (Array.isArray(state.recents)) recents = state.recents.slice(0, RECENT_LIMIT);
+  if (typeof state.changeMarksVisible === "boolean") changeMarksVisible = state.changeMarksVisible;
   if (Array.isArray(state.expanded)) Workspace.setExpanded(state.expanded);
   if (Array.isArray(state.collapsedRoots)) Workspace.setCollapsedRoots(state.collapsedRoots);
   if (state.sectionWeights) Workspace.setSectionWeights(state.sectionWeights);
@@ -1182,6 +1350,7 @@ function saveSession() {
       sectionWeights: Workspace.sectionWeights(),
       panels: Panels.snapshot(),
       recents,
+      changeMarksVisible,
       layout: Layout.serialize()
     });
   }, 400);
@@ -1216,6 +1385,7 @@ host.addEventListener("message", (event) => {
     case "doc-content": {
       // Content for a restored tab: fill it in without creating a new tab.
       docs.set(payload.path, payload);
+      noteDocChanged(payload.path, payload.html);
       for (const pane of Layout.panesShowing(payload.path)) {
         if (pane.active === payload.path) paintDoc(pane);
         refreshPaneChrome(pane);
@@ -1240,6 +1410,7 @@ host.addEventListener("message", (event) => {
       noteExitSave(payload.path, payload.saved);
 
       if (payload.saved) {
+        selfChanged.add(payload.path);
         Editor.markSaved(payload.path);
         refreshDirtyMarks();
 
@@ -1284,6 +1455,7 @@ host.addEventListener("message", (event) => {
 
     case "doc-opened": {
       docs.set(payload.path, payload);
+      noteDocChanged(payload.path, payload.html);
       noteRecent(payload.path);
       rememberAnchors();
 
@@ -1307,6 +1479,7 @@ host.addEventListener("message", (event) => {
 
     case "doc-updated": {
       docs.set(payload.path, payload);
+      noteDocChanged(payload.path, payload.html);
 
       // Repaint only the panes showing this file, so an update in one pane never
       // disturbs the reader's position in another.
@@ -1341,6 +1514,8 @@ host.addEventListener("message", (event) => {
       if (Editor.noteExternalChange(payload.path)) post("get-text", payload.path);
       for (const pane of Layout.panesShowing(payload.path)) updateNotice(pane);
 
+      refreshChangeChips();
+      Menu.refresh();
       refreshOutline();
       refreshStatus(true);
       break;
@@ -1395,6 +1570,16 @@ window.Commands = (() => {
     () => !associationRegistered,
     "GreenMD is already registered as a markdown handler.");
 
+  define("clearChangeMarks", "Mark changes as seen", "Ctrl+M", () => {
+    const p = Layout.activePane();
+    // Guarded against hidden marks: dismissing what cannot be seen would silently
+    // discard everything accumulated while the display was off.
+    if (changeMarksVisible && p && p.active) dismissChangeMarks(p.active);
+  }, () => {
+    const p = Layout.activePane();
+    return changeMarksVisible && !!(p && p.active && changeMarks.has(p.active));
+  }, "No change marks to clear — nothing has changed since you last looked, or marks are hidden (View menu).");
+
   define("toggleSource", "Toggle source editing", "Ctrl+E",
     () => toggleMode(Layout.activePane()),
     () => { const p = Layout.activePane(); return !!(p && p.active); },
@@ -1406,6 +1591,8 @@ window.Commands = (() => {
   });
 
   define("toggleOutline", "Show or hide outline", "Ctrl+Shift+O", () => Panels.toggle("outline"));
+  define("toggleChangeMarks", "Show or hide change marks", "",
+    () => setChangeMarksVisible(!changeMarksVisible));
   define("swapPanels", "Swap left and right panels", "", () => Panels.swap());
   define("resetPaneWidths", "Reset panel widths", "", () => Panels.resetWidths());
 
@@ -1459,6 +1646,7 @@ window.KEY_BINDINGS = [
   { key: "s", command: "save" },
   { key: "w", command: "closeTab" },
   { key: "e", command: "toggleSource" },
+  { key: "m", command: "clearChangeMarks" },
   { key: "b", command: "toggleFiles" },
   { key: "o", shift: true, command: "toggleOutline" },
   { key: "0", command: "zoomReset" },
