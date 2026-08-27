@@ -34,6 +34,7 @@ public partial class MainWindow : Window
         _dumpStatePath = dumpStatePath;
         InitializeComponent();
         Native.UseDarkTitleBar(this);
+        WindowPlacement.Restore(this);
 
         // Routing Explorer drops through WPF (AllowExternalDrop=false) kept their
         // real paths, but in the WPF host it also suppressed the page's own tab
@@ -63,6 +64,10 @@ public partial class MainWindow : Window
     /// </summary>
     private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        // Saved on every close attempt -- a cancelled close just saves again later,
+        // and this way the geometry is captured while the window still has it.
+        WindowPlacement.Save(this);
+
         if (_closeConfirmed || !_uiReady) return;
 
         e.Cancel = true;
