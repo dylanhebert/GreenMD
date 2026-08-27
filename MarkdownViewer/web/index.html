@@ -16,12 +16,20 @@
 </head>
 <body>
   <div class="shell">
+    <div id="menubar" class="menubar" role="menubar" aria-label="Main menu"></div>
+
     <div class="body">
       <aside id="sidebar" class="sidebar" data-zoom-scope="tree" hidden>
         <div id="workspaceSections" class="ws-sections"></div>
       </aside>
 
+      <div id="sidebarDivider" class="body-divider" hidden
+           role="separator" aria-orientation="vertical" aria-label="Resize file list"></div>
+
       <div id="panes" class="panes"></div>
+
+      <div id="outlineDivider" class="body-divider"
+           role="separator" aria-orientation="vertical" aria-label="Resize outline"></div>
 
       <aside class="pane-outline" data-zoom-scope="outline">
         <header class="panehead">
@@ -44,12 +52,13 @@
     </div>
 
     <div class="status">
+      <button id="openFolder" class="status-action" type="button" title="Ctrl+K">Open folder</button>
       <span id="pulse" class="pulse" aria-hidden="true"></span>
       <span id="statusText"></span>
       <span id="statusRight" class="status-right"></span>
       <button id="toggleSidebar" class="panel-toggle" type="button" title="Show or hide the file list (Ctrl+B)">Files</button>
       <button id="toggleOutline" class="panel-toggle" type="button" title="Show or hide the outline (Ctrl+Shift+O)">Outline</button>
-      <button id="openFolder" class="status-action" type="button" title="Ctrl+K">Open folder</button>
+      <button id="swapPanels" class="panel-toggle" type="button" title="Swap the left and right panels">Swap sides</button>
       <button id="assocButton" class="status-action" type="button" hidden>Set as default .md viewer</button>
     </div>
   </div>
@@ -68,6 +77,8 @@
   <script src="/workspace.js"></script>
   <script src="/find.js"></script>
   <script src="/editor.js"></script>
+  <script src="/panels.js"></script>
+  <script src="/menu.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

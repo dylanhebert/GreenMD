@@ -33,6 +33,10 @@ window.Workspace = (() => {
   /** The file the active pane is showing. Owned here so a rebuild cannot lose it. */
   let currentPath = null;
 
+  /** Paths open in any tab, and those currently in source mode. */
+  let openPaths = new Set();
+  let editingPaths = new Set();
+
   let hooks = {};
 
   let sidebarEl = null;
@@ -319,9 +323,20 @@ window.Workspace = (() => {
 
   function applyCurrent() {
     if (!sectionsEl) return;
+
     for (const row of sectionsEl.querySelectorAll(".tree-file")) {
-      row.classList.toggle("current", row.dataset.path === currentPath);
+      const path = row.dataset.path;
+      row.classList.toggle("current", path === currentPath);
+      row.classList.toggle("open", path !== currentPath && openPaths.has(path));
+      row.classList.toggle("editing", editingPaths.has(path));
     }
+  }
+
+  /** Which files are open in a tab, and which of those are in source mode. */
+  function setOpenFiles(open, editing) {
+    openPaths = new Set(open || []);
+    editingPaths = new Set(editing || []);
+    applyCurrent();
   }
 
   /** Expands whatever is hiding a path: its section, and its parent folders. */
@@ -509,7 +524,7 @@ window.Workspace = (() => {
     expandedPaths, setExpanded,
     collapsedRoots, setCollapsedRoots,
     sectionWeights, setSectionWeights,
-    highlight, currentFile: () => currentPath,
+    highlight, setOpenFiles, currentFile: () => currentPath,
     openQuick, closeQuick, isQuickOpen
   };
 })();

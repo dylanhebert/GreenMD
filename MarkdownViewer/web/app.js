@@ -16,7 +16,6 @@ const findCountEl = document.getElementById("findCount");
 const findScopeEl = document.getElementById("findScope");
 const toggleSidebarEl = document.getElementById("toggleSidebar");
 const toggleOutlineEl = document.getElementById("toggleOutline");
-const outlineAsideEl = document.querySelector(".pane-outline");
 
 /** path -> { path, title, folder, html, outline, missing, loadedAt } */
 const docs = new Map();
@@ -25,26 +24,6 @@ const docs = new Map();
 let dragging = null;
 
 let welcome = null;
-
-/** Side panel visibility, persisted with the session. */
-const panels = { sidebar: true, outline: true };
-
-function applyPanels() {
-  Workspace.setVisible(panels.sidebar);
-  outlineAsideEl.hidden = !panels.outline;
-
-  toggleSidebarEl.classList.toggle("on", panels.sidebar && Workspace.hasWorkspace());
-  toggleOutlineEl.classList.toggle("on", panels.outline);
-}
-
-function togglePanel(which) {
-  // With no workspace bound there is nothing to show, so offer to pick one instead.
-  if (which === "sidebar" && !Workspace.hasWorkspace()) { post("pick-folder"); return; }
-
-  panels[which] = !panels[which];
-  applyPanels();
-  saveSession();
-}
 
 /** Most-recently-opened paths, newest first. Persisted with the session. */
 let recents = [];
@@ -84,12 +63,40 @@ function relativeTime(iso) {
   return new Date(then).toLocaleDateString();
 }
 
+/** Every path in source mode in any pane, for marking the tree and the tabs. */
+function editingPaths() {
+  const editing = new Set();
+  for (const pane of Layout.panes()) {
+    for (const path of pane.tabs) {
+      if (modeOf(pane, path) === "edit") editing.add(path);
+    }
+  }
+  return [...editing];
+}
+
 function modeOf(pane, path) {
   return pane.modes && pane.modes[path] === "edit" ? "edit" : "view";
 }
 
 function editorElementOf(pane) {
   return panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"] .editor`);
+}
+
+function editorWrapOf(pane) {
+  return panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"] .editor-wrap`);
+}
+
+/** Repaints the highlighted layer from the textarea's current text. */
+function paintHighlight(wrap) {
+  const editor = wrap.querySelector(".editor");
+  const code = wrap.querySelector(".editor-highlight code");
+  if (!editor || !code) return;
+
+  // A trailing newline collapses in a <pre>, so the last line would sit under the
+  // caret without one. The extra space keeps the two layers aligned.
+  const newline = String.fromCharCode(10);
+  const text = editor.value.endsWith(newline) ? editor.value + " " : editor.value;
+  code.innerHTML = HL.highlight(text, "markdown");
 }
 
 function noticeElementOf(pane) {
@@ -200,7 +207,8 @@ function buildTabstrip(pane) {
     const tab = document.createElement("div");
     tab.className = "tab"
       + (path === pane.active ? " active" : "")
-      + (doc && doc.missing ? " missing" : "");
+      + (doc && doc.missing ? " missing" : "")
+      + (modeOf(pane, path) === "edit" ? " editing" : "");
     tab.dataset.path = path;
     tab.draggable = true;
     tab.title = path;
@@ -336,17 +344,38 @@ function renderPane(pane, element) {
     });
   }, { passive: true });
 
+  // A textarea cannot style its own text, so a highlighted layer sits behind a
+  // transparent one. Both must share every metric that affects wrapping, which is
+  // why the padding, font and white-space rules live on a shared selector.
+  const wrap = document.createElement("div");
+  wrap.className = "editor-wrap";
+  wrap.hidden = true;
+  wrap.setAttribute("data-zoom-target", "");
+
+  const highlight = document.createElement("pre");
+  highlight.className = "editor-highlight";
+  highlight.setAttribute("aria-hidden", "true");
+  highlight.append(document.createElement("code"));
+
   const editor = document.createElement("textarea");
   editor.className = "editor";
   editor.spellcheck = false;
-  editor.hidden = true;
-  editor.setAttribute("data-zoom-target", "");
+
   editor.addEventListener("input", () => {
     if (!pane.active) return;
     Editor.setText(pane.id, pane.active, editor.value);
+    paintHighlight(wrap);
     refreshDirtyMarks();
   });
-  element.append(editor);
+
+  // The highlight layer does not scroll itself; it follows the textarea.
+  editor.addEventListener("scroll", () => {
+    highlight.scrollTop = editor.scrollTop;
+    highlight.scrollLeft = editor.scrollLeft;
+  }, { passive: true });
+
+  wrap.append(highlight, editor);
+  element.append(wrap);
 
   const hint = document.createElement("div");
   hint.className = "drop-hint";
@@ -377,13 +406,14 @@ function renderPane(pane, element) {
  */
 function applyMode(pane) {
   const scroller = docElementOf(pane);
+  const wrap = editorWrapOf(pane);
   const editor = editorElementOf(pane);
-  if (!scroller || !editor) return;
+  if (!scroller || !wrap || !editor) return;
 
   const editing = pane.active ? modeOf(pane, pane.active) === "edit" : false;
 
   scroller.hidden = editing;
-  editor.hidden = !editing;
+  wrap.hidden = !editing;
 
   const button = panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"] .mode-button`);
   if (button) {
@@ -403,6 +433,7 @@ function applyMode(pane) {
     editor.value = text;
   }
 
+  paintHighlight(wrap);
   updateNotice(pane);
 }
 
@@ -503,7 +534,9 @@ function toggleMode(pane) {
 
   pane.modes[pane.active] = modeOf(pane, pane.active) === "edit" ? "view" : "edit";
   applyMode(pane);
+  refreshPaneChrome(pane);
   refreshDirtyMarks();
+  Workspace.setOpenFiles(Layout.openPaths(), editingPaths());
   saveSession();
 
   const editor = editorElementOf(pane);
@@ -543,6 +576,7 @@ function renderAll({ keepAnchors = true, save = true } = {}) {
 
   const pane = Layout.activePane();
   Workspace.highlight(pane && pane.active ? pane.active : null);
+  Workspace.setOpenFiles(Layout.openPaths(), editingPaths());
 
   for (const p of Layout.panes()) applyMode(p);
   refreshDirtyMarks();
@@ -557,6 +591,7 @@ function renderAll({ keepAnchors = true, save = true } = {}) {
   }
 
   if (save) saveSession();
+  Menu.refresh();
 }
 
 // ---------- outline ----------
@@ -799,17 +834,11 @@ function refreshPaneChrome(pane) {
 function restoreSession(state) {
   if (!state) return;
 
-  if (state.panels && typeof state.panels === "object") {
-    panels.sidebar = state.panels.sidebar !== false;
-    panels.outline = state.panels.outline !== false;
-  }
+  if (state.panels) Panels.restore(state.panels);
   if (Array.isArray(state.recents)) recents = state.recents.slice(0, RECENT_LIMIT);
   if (Array.isArray(state.expanded)) Workspace.setExpanded(state.expanded);
   if (Array.isArray(state.collapsedRoots)) Workspace.setCollapsedRoots(state.collapsedRoots);
   if (state.sectionWeights) Workspace.setSectionWeights(state.sectionWeights);
-
-  // Reading the panel state is not enough; it has to be applied.
-  applyPanels();
 
   if (state.layout) Layout.restore(state.layout);
 
@@ -830,7 +859,7 @@ function saveSession() {
       expanded: Workspace.expandedPaths(),
       collapsedRoots: Workspace.collapsedRoots(),
       sectionWeights: Workspace.sectionWeights(),
-      panels: { ...panels },
+      panels: Panels.snapshot(),
       recents,
       layout: Layout.serialize()
     });
@@ -848,7 +877,7 @@ host.addEventListener("message", (event) => {
 
     case "workspace": {
       Workspace.set(payload);
-      applyPanels();
+      Panels.apply();
 
       // The tree usually loads after the document, so the marker has to be set
       // here too rather than only when the active document changes.
@@ -979,6 +1008,109 @@ host.addEventListener("message", (event) => {
 
 // ---------- keyboard ----------
 
+
+// ---------- commands ----------
+//
+// One list, used by both the menu bar and the keyboard. A command cannot gain a
+// shortcut without also appearing in a menu, because there is nowhere else to define
+// one.
+
+window.Commands = (() => {
+  const map = new Map();
+
+  const define = (id, label, keys, run, available) =>
+    map.set(id, { id, label, keys, run, available });
+
+  define("openFile", "Open file...", "Ctrl+O", () => post("pick-file"));
+  define("addFolder", "Add folder to sidebar...", "Ctrl+K", () => post("pick-folder"));
+  define("goToFile", "Go to file...", "Ctrl+P", () => Workspace.openQuick(recents));
+  define("find", "Find in document", "Ctrl+F", openFind);
+
+  define("save", "Save", "Ctrl+S", () => saveActive(false),
+    () => { const p = Layout.activePane(); return !!(p && p.active && Editor.isDirty(p.id, p.active)); });
+
+  define("closeTab", "Close tab", "Ctrl+W", () => {
+    const pane = Layout.activePane();
+    if (pane && pane.active) requestCloseTab(pane.id, pane.active);
+  }, () => { const p = Layout.activePane(); return !!(p && p.active); });
+
+  define("closeFolders", "Close all folders", "", () => post("close-workspace"),
+    () => Workspace.hasWorkspace());
+
+  define("registerAssociation", "Set as default .md viewer", "",
+    () => post("register-association"));
+
+  define("toggleSource", "Toggle source editing", "Ctrl+E",
+    () => toggleMode(Layout.activePane()),
+    () => { const p = Layout.activePane(); return !!(p && p.active); });
+
+  define("toggleFiles", "Show or hide file list", "Ctrl+B", () => {
+    if (!Workspace.hasWorkspace()) { post("pick-folder"); return; }
+    Panels.toggle("sidebar");
+  });
+
+  define("toggleOutline", "Show or hide outline", "Ctrl+Shift+O", () => Panels.toggle("outline"));
+  define("swapPanels", "Swap left and right panels", "", () => Panels.swap());
+  define("resetPaneWidths", "Reset panel widths", "", () => Panels.resetWidths());
+
+  const zoomScope = () => Zoom.hoveredScope() || ("pane:" + Layout.activeId);
+  define("zoomIn", "Larger text", "Ctrl+=", () => Zoom.nudge(zoomScope(), 1));
+  define("zoomOut", "Smaller text", "Ctrl+-", () => Zoom.nudge(zoomScope(), -1));
+  define("zoomReset", "Reset text size", "Ctrl+0", () => Zoom.set(zoomScope(), 1));
+
+  define("splitRight", "Split pane right", "Ctrl+\\", () => splitActive("row"));
+  define("splitDown", "Split pane down", "Ctrl+Shift+\\", () => splitActive("col"));
+
+  define("nextTab", "Next tab", "Ctrl+Tab", () => cycleTab(1),
+    () => { const p = Layout.activePane(); return !!p && p.tabs.length > 1; });
+  define("prevTab", "Previous tab", "Ctrl+Shift+Tab", () => cycleTab(-1),
+    () => { const p = Layout.activePane(); return !!p && p.tabs.length > 1; });
+
+  return { get: id => map.get(id), run: id => map.get(id)?.run() };
+})();
+
+function splitActive(direction) {
+  const pane = Layout.activePane();
+  if (!pane) return;
+
+  rememberAnchors();
+  const created = Layout.split(pane.id, direction);
+  // Carry the current document into the new pane so the split is useful at once.
+  if (created && pane.active) Layout.addTab(created.id, pane.active);
+  renderAll({ keepAnchors: false });
+}
+
+function cycleTab(delta) {
+  const pane = Layout.activePane();
+  if (!pane || pane.tabs.length < 2) return;
+
+  const index = pane.tabs.indexOf(pane.active);
+  const next = (index + delta + pane.tabs.length) % pane.tabs.length;
+
+  rememberAnchors();
+  pane.active = pane.tabs[next];
+  renderAll({ keepAnchors: false });
+}
+
+/** Key combinations, resolved against the same registry the menu renders from. */
+window.KEY_BINDINGS = [
+  { key: "o", command: "openFile" },
+  { key: "k", command: "addFolder" },
+  { key: "p", command: "goToFile" },
+  { key: "f", command: "find" },
+  { key: "s", command: "save" },
+  { key: "w", command: "closeTab" },
+  { key: "e", command: "toggleSource" },
+  { key: "b", command: "toggleFiles" },
+  { key: "o", shift: true, command: "toggleOutline" },
+  { key: "0", command: "zoomReset" },
+  { key: "=", command: "zoomIn" },
+  { key: "+", command: "zoomIn" },
+  { key: "-", command: "zoomOut" },
+  { key: "Tab", command: "nextTab" },
+  { key: "Tab", shift: true, command: "prevTab" }
+];
+
 document.addEventListener("keydown", (event) => {
   // The overlay handles its own keys; Escape closes it from anywhere.
   if (Workspace.isQuickOpen()) {
@@ -994,79 +1126,21 @@ document.addEventListener("keydown", (event) => {
 
   if (!event.ctrlKey && !event.metaKey) return;
 
-  const scope = Zoom.hoveredScope() || ("pane:" + Layout.activeId);
-  const pane = Layout.activePane();
-
-  switch (event.key) {
-    case "e":
-      event.preventDefault();
-      toggleMode(Layout.activePane());
-      return;
-
-    case "s":
-      event.preventDefault();
-      saveActive(false);
-      return;
-
-    case "f":
-      event.preventDefault();
-      openFind();
-      return;
-
-    case "b":
-      event.preventDefault();
-      togglePanel("sidebar");
-      return;
-
-    case "O":
-    case "o":
-      event.preventDefault();
-      if (event.shiftKey) togglePanel("outline"); else post("pick-file");
-      return;
-
-    case "k":
-      event.preventDefault();
-      post("pick-folder");
-      return;
-
-    case "p":
-      event.preventDefault();
-      Workspace.openQuick(recents);
-      return;
-
-    case "w":
-      event.preventDefault();
-      if (pane && pane.active) requestCloseTab(pane.id, pane.active);
-      return;
-
-    case "0": event.preventDefault(); Zoom.set(scope, 1); return;
-    case "+":
-    case "=": event.preventDefault(); Zoom.nudge(scope, 1); return;
-    case "-": event.preventDefault(); Zoom.nudge(scope, -1); return;
-
-    case "\\":
-      event.preventDefault();
-      if (pane) {
-        rememberAnchors();
-        const created = Layout.split(pane.id, event.shiftKey ? "col" : "row");
-        // Carry the current document into the new pane so the split is useful at once.
-        if (created && pane.active) Layout.addTab(created.id, pane.active);
-        renderAll({ keepAnchors: false });
-      }
-      return;
-  }
-
-  if (event.key === "Tab" && pane && pane.tabs.length > 1) {
+  // Ctrl+Shift+backslash arrives as "|" on a US layout, so both are accepted.
+  const isBackslash = event.key === "\\" || event.key === "|";
+  if (isBackslash) {
     event.preventDefault();
-    const index = pane.tabs.indexOf(pane.active);
-    const next = event.shiftKey
-      ? (index - 1 + pane.tabs.length) % pane.tabs.length
-      : (index + 1) % pane.tabs.length;
-
-    rememberAnchors();
-    pane.active = pane.tabs[next];
-    renderAll({ keepAnchors: false });
+    Commands.run(event.shiftKey ? "splitDown" : "splitRight");
+    return;
   }
+
+  const binding = KEY_BINDINGS.find(b =>
+    b.key.toLowerCase() === event.key.toLowerCase() && !!b.shift === event.shiftKey);
+
+  if (!binding) return;
+
+  event.preventDefault();
+  Commands.run(binding.command);
 });
 
 // ---------- find ----------
@@ -1120,13 +1194,14 @@ document.getElementById("findNext").addEventListener("click", () => { Find.next(
 document.getElementById("findPrev").addEventListener("click", () => { Find.previous(); updateFindCount(); });
 document.getElementById("findClose").addEventListener("click", closeFind);
 
-toggleSidebarEl.addEventListener("click", () => togglePanel("sidebar"));
-toggleOutlineEl.addEventListener("click", () => togglePanel("outline"));
+toggleSidebarEl.addEventListener("click", () => Commands.run("toggleFiles"));
+toggleOutlineEl.addEventListener("click", () => Commands.run("toggleOutline"));
+document.getElementById("swapPanels").addEventListener("click", () => Commands.run("swapPanels"));
 
-openFolderEl.addEventListener("click", () => post("pick-folder"));
+openFolderEl.addEventListener("click", () => Commands.run("addFolder"));
 
 assocButtonEl.addEventListener("click", () => {
-  post("register-association");
+  Commands.run("registerAssociation");
   statusTextEl.textContent =
     "Registered. Windows will ask you to confirm the default the next time you open a .md file.";
 });
@@ -1170,7 +1245,20 @@ function highlightActivePane() {
   }
 }
 
-applyPanels();
+Panels.configure({
+  sidebarHasContent: () => Workspace.hasWorkspace(),
+  onChanged() {
+    toggleSidebarEl.classList.toggle("on", Panels.isShown("sidebar") && Workspace.hasWorkspace());
+    toggleOutlineEl.classList.toggle("on", Panels.isShown("outline"));
+    document.getElementById("swapPanels").classList.toggle("on", Panels.isSwapped());
+    Workspace.setVisible(Panels.isShown("sidebar"));
+    if (window.Menu) Menu.refresh();
+  },
+  onPersist() { saveSession(); }
+});
+
+Menu.configure(Commands);
+
 Layout.mount(panesEl);
 Zoom.applyAll();
 renderAll({ keepAnchors: false });
@@ -1220,8 +1308,14 @@ function measureLayout() {
     },
     verdict: {
       bodyFillsWidth: body ? Math.abs(box(body).w - window.innerWidth) <= 1 : null,
-      bodyFillsHeight: body && status
-        ? Math.abs(box(body).h - (window.innerHeight - box(status).h)) <= 2 : null,
+      // Sums every visible sibling rather than assuming which ones exist. Hardcoding
+      // "viewport minus the status bar" went stale the moment a menu bar was added,
+      // and that is now the third assertion to fail that way rather than catch a bug.
+      shellChildrenTileHeight: shell
+        ? Math.abs([...shell.children]
+            .filter(c => !c.hidden)
+            .reduce((sum, c) => sum + box(c).h, 0) - box(shell).h) <= 2
+        : null,
       statusOnBottomEdge: status
         ? Math.abs((box(status).y + box(status).h) - window.innerHeight) <= 2 : null,
       outlineFullHeight: aside && body ? Math.abs(box(aside).h - box(body).h) <= 2 : null,
@@ -1230,6 +1324,7 @@ function measureLayout() {
       outlineOnScreen: aside ? box(aside).x + box(aside).w <= window.innerWidth + 1 : null,
       // Sums every visible child rather than a hardcoded pair; this assertion was
       // written before the sidebar existed and quietly stopped covering the truth.
+      bodyOnScreen: body ? box(body).y + box(body).h <= window.innerHeight + 1 : null,
       childrenTileBody: body
         ? Math.abs([...body.children]
             .filter(c => !c.hidden)

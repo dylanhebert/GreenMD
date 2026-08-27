@@ -95,7 +95,7 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .pane > .pane-notice { flex: 0 0 auto; }
 
 .pane > .doc,
-.pane > .editor { flex: 1 1 auto; min-height: 0; }
+.pane > .editor-wrap { flex: 1 1 auto; min-height: 0; }
 
 /* Only worth showing which pane has focus once there is more than one. */
 .panes .split .pane.pane-active .dochead { box-shadow: inset 2px 0 0 var(--live); }
@@ -480,7 +480,7 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 /* ---------- workspace sidebar ---------- */
 
 .sidebar {
-  flex: 0 0 230px;
+  flex: 0 0 var(--sidebar-width, 230px);
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -523,14 +523,32 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 }
 .tree-dir { color: var(--text); }
 .tree-dir:hover, .tree-file:hover { background: #201f1d; color: var(--text); }
+/* Three states worth telling apart: closed, open in a tab, and the active one. */
+.tree-file.open { color: var(--text); }
+.tree-file.open .tree-label { text-decoration: underline; text-decoration-color: #3f5d54; }
+
 .tree-file.current {
   color: var(--live);
   background: #1b2521;
   box-shadow: inset 2px 0 0 var(--live);
 }
-.tree-file.current .tree-label { font-weight: 600; }
+.tree-file.current .tree-label { font-weight: 600; text-decoration: none; }
 
-.tree-caret { width: .8em; flex-shrink: 0; color: var(--text-muted); font-size: .85em; }
+.tree-file.editing .tree-label::after {
+  content: " ✎";
+  color: var(--live);
+}
+
+.tree-caret {
+  width: 1.1em;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 1.15em;
+  line-height: 1;
+  text-align: center;
+}
+.tree-dir:hover > .tree-caret,
+.ws-header:hover > .tree-caret { color: var(--text); }
 .tree-label { overflow: hidden; text-overflow: ellipsis; }
 
 .tree-note { padding: 8px 12px; font-size: .85em; color: var(--text-muted); }
@@ -640,21 +658,68 @@ mark.find-current {
 
 /* ---------- editor ---------- */
 
+/*
+ * Two stacked layers with identical metrics: a <pre> carrying the highlighted markup,
+ * and a transparent textarea on top that keeps native editing, undo and IME. Every
+ * property affecting where text wraps must be declared on both, or the caret drifts
+ * away from the glyphs behind it.
+ */
+.editor-wrap {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+.editor-wrap[hidden] { display: none; }
+
+.editor-highlight,
 .editor {
-  display: block;
-  width: 100%;
+  position: absolute;
+  inset: 0;
+  margin: 0;
   padding: 20px 26px;
   font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  font-size: inherit;
   line-height: 1.65;
-  color: var(--text);
-  background: var(--bg);
-  border: 0;
-  outline: none;
-  resize: none;
+  letter-spacing: normal;
   tab-size: 4;
   white-space: pre-wrap;
+  overflow-wrap: break-word;
+  border: 0;
 }
-.editor[hidden] { display: none; }
+
+.editor-highlight {
+  overflow: hidden;                /* driven by the textarea's scroll position */
+  pointer-events: none;
+  color: #c8c6c0;
+  background: transparent;
+}
+
+.editor {
+  overflow: auto;
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: transparent;              /* the layer behind supplies the visible glyphs */
+  caret-color: var(--text);
+}
+.editor::selection { background: #3a4d46; }
+
+/* ---------- markdown source tokens ---------- */
+
+.hl-mdheading   { color: #e5c07b; font-weight: 600; }
+.hl-mdbold      { color: #e8e6e0; font-weight: 600; }
+.hl-mditalic    { color: #c8c6c0; font-style: italic; }
+.hl-mdcode      { color: #5dcaa5; }
+.hl-mdfence     { color: #5dcaa5; }
+.hl-mdlink      { color: #61afef; }
+.hl-mdrefLink   { color: #61afef; }
+.hl-mdautolink  { color: #61afef; text-decoration: underline; }
+.hl-mdquote     { color: #a3a099; font-style: italic; }
+.hl-mdmarker    { color: #b48ee8; }
+.hl-mdtask      { color: var(--live); }
+.hl-mdtable     { color: #d19a66; }
+.hl-mdrule      { color: #6f6d67; }
 
 .mode-button {
   padding: 1px 9px;
@@ -675,6 +740,14 @@ mark.find-current {
   content: "● ";
   color: var(--live);
 }
+
+/* Editing is shown whether or not there are unsaved changes -- knowing a tab is in
+   source mode matters even when it is clean. */
+.tab.editing .tab-label::after {
+  content: " ✎";
+  color: var(--live);
+}
+.tab.editing { border-bottom-color: #2a4d43; }
 
 .dochead-unsaved {
   padding: 1px 8px;
@@ -771,3 +844,102 @@ mark.find-current {
   cursor: row-resize;
 }
 .ws-divider:hover { background: var(--border-strong); }
+
+/* ---------- scrollbars ---------- */
+
+/*
+ * Slim everywhere. Firefox honours scrollbar-width; Chromium (which is what WebView2
+ * is) needs the ::-webkit- rules, so both are declared. The transparent border plus
+ * background-clip is what makes the thumb read as narrow without shrinking the
+ * clickable target to nothing.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #45453e transparent;
+}
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #3a3a34;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover { background: #55554c; background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---------- menu bar ---------- */
+
+.menubar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  user-select: none;
+  z-index: 30;
+}
+
+.menu { position: relative; }
+
+.menu-title {
+  padding: 5px 11px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.menu-title:hover { color: var(--text); background: #212120; }
+.menu.open .menu-title { color: var(--text); background: #23231f; }
+
+.menu-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 260px;
+  padding: 4px 0;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border-strong);
+  border-radius: 0 0 6px 6px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
+}
+.menu-list[hidden] { display: none; }
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  width: 100%;
+  padding: 5px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+.menu-item:hover { background: #24312c; }
+
+/* Unavailable rather than disabled: still clickable, just visibly not useful now.
+   A disabled control gives no feedback at all when someone tries it. */
+.menu-item.unavailable { color: var(--text-muted); }
+
+.menu-keys { margin-left: auto; font-size: 11px; color: var(--text-muted); }
+.menu-separator { height: 1px; margin: 4px 0; background: var(--border); }
+
+/* ---------- side panel dividers ---------- */
+
+.body-divider {
+  flex: 0 0 5px;
+  background: var(--border);
+  cursor: col-resize;
+  z-index: 2;
+}
+.body-divider:hover { background: var(--border-strong); }
+.body-divider[hidden] { display: none; }

@@ -22,6 +22,9 @@ window.HL = (() => {
 
   const NUM = String.raw`\b(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?)[uUlLfFdDmM]*\b`;
 
+  /** A backtick cannot appear inside a template literal, so patterns build around this. */
+  const BT = String.fromCharCode(96);
+
   rules.csharp = [
     { cls: "comment", re: String.raw`//[^\n]*|/\*[\s\S]*?\*/` },
     { cls: "string", re: String.raw`\$?@"(?:[^"]|"")*"|\$?"(?:[^"\\\n]|\\[\s\S])*"|'(?:[^'\\\n]|\\[\s\S])*'` },
@@ -103,6 +106,31 @@ window.HL = (() => {
     { cls: "string", re: String.raw`"[^"\n]*"|'[^'\n]*'` }
   ];
 
+  // Markdown, for the source editor. Order matters: fenced blocks and comments are
+  // matched before anything inside them can be, and emphasis before list markers so a
+  // leading "*" is not claimed by the wrong rule.
+  rules.markdown = [
+    // A fence contains backticks, so its pattern cannot be a template literal, and a
+    // quoted string would eat the escapes. Concatenating around BT keeps both intact.
+    { cls: "mdfence", re: "^" + BT + BT + BT + String.raw`[^\n]*\n[\s\S]*?^` + BT + BT + BT + String.raw`[^\n]*$`
+                          + "|^~~~" + String.raw`[^\n]*\n[\s\S]*?^~~~[^\n]*$` },
+    { cls: "comment", re: String.raw`<!--[\s\S]*?-->` },
+    { cls: "mdheading", re: String.raw`^[ \t]{0,3}#{1,6}[ \t][^\n]*` },
+    { cls: "mdrule", re: String.raw`^[ \t]{0,3}(?:-[ \t]*){3,}$|^[ \t]{0,3}(?:\*[ \t]*){3,}$|^[ \t]{0,3}(?:_[ \t]*){3,}$` },
+    { cls: "mdquote", re: String.raw`^[ \t]{0,3}>[^\n]*` },
+    { cls: "mdtable", re: String.raw`^[ \t]{0,3}\|[^\n]*\|[ \t]*$` },
+    { cls: "mdcode", re: BT + BT + String.raw`[^` + BT + String.raw`\n]+` + BT + BT
+                        + "|" + BT + String.raw`[^` + BT + String.raw`\n]+` + BT },
+    { cls: "mdlink", re: String.raw`!?\[[^\]\n]*\]\([^)\n]*\)` },
+    { cls: "mdrefLink", re: String.raw`!?\[[^\]\n]*\]\[[^\]\n]*\]` },
+    { cls: "mdtask", re: String.raw`^[ \t]*(?:[-\*+]|\d+[.)])[ \t]+\[[ xX]\]` },
+    { cls: "mdmarker", re: String.raw`^[ \t]*(?:[-\*+]|\d+[.)])[ \t]` },
+    { cls: "mdbold", re: String.raw`\*\*(?:[^*\n]|\*(?!\*))+\*\*|__(?:[^_\n]|_(?!_))+__` },
+    { cls: "mditalic", re: String.raw`\*(?!\*)[^*\n]+\*` },
+    { cls: "mdautolink", re: String.raw`<https?://[^>\s]+>|https?://[^\s<>)\]]+` },
+    { cls: "meta", re: String.raw`^---[ \t]*$` }
+  ];
+
   rules.diff = [
     { cls: "meta", re: String.raw`^(?:@@[^\n]*|diff [^\n]*|index [^\n]*)` },
     { cls: "addition", re: String.raw`^\+[^\n]*` },
@@ -119,7 +147,8 @@ window.HL = (() => {
     js: "javascript", jsx: "javascript", ts: "javascript", tsx: "javascript", typescript: "javascript", mjs: "javascript",
     yml: "yaml",
     toml: "ini", conf: "ini", properties: "ini", env: "ini",
-    patch: "diff"
+    patch: "diff",
+    md: "markdown", mkd: "markdown", markdown: "markdown"
   };
 
   const compiled = new Map();

@@ -63,12 +63,17 @@ window.navigator.clipboard = { writeText: async () => {} };
 // jsdom implements no layout, so these are absent. The app only uses them for effect.
 window.Element.prototype.scrollIntoView = function () {};
 
-for (const file of ["highlight.js", "zoom.js", "layout.js", "workspace.js", "find.js", "editor.js", "app.js"]) {
+for (const file of ["highlight.js", "zoom.js", "layout.js", "workspace.js", "find.js", "editor.js", "panels.js", "menu.js", "app.js"]) {
   try {
     window.eval(readFileSync(WEB + file, "utf8"));
   } catch (e) {
     errors.push(`${file} threw at load: ${e.message}`);
   }
+}
+
+if (errors.length) {
+  console.log("LOAD ERRORS:");
+  for (const e of errors) console.log("  " + e);
 }
 
 function send(type, payload) {
@@ -477,12 +482,12 @@ function editDoc(bodyHtml) {
 
 send("doc-opened", editDoc("body"));
 
-check("editor hidden in view mode", $(".pane .editor")?.hidden === true);
+check("editor hidden in view mode", $(".pane .editor-wrap")?.hidden === true);
 check("mode button says Edit", $(".pane .mode-button")?.textContent === "Edit");
 
 const beforeText = posted.filter(m => m.type === "get-text").length;
 key("e", { ctrlKey: true });
-check("Ctrl+E reveals the editor", $(".pane .editor")?.hidden === false);
+check("Ctrl+E reveals the editor", $(".pane .editor-wrap")?.hidden === false);
 check("rendered view hides while editing", $(".pane .doc")?.hidden === true);
 check("entering edit mode requests the source",
       posted.filter(m => m.type === "get-text").length === beforeText + 1);
@@ -705,10 +710,52 @@ check("no sections when every folder is closed", $$(".ws-section").length === 0)
 check("outline panel starts visible", $(".pane-outline").hidden === false);
 $("#toggleOutline").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 check("outline toggle hides the panel", $(".pane-outline").hidden === true);
+check("its divider hides with it", $("#outlineDivider").hidden === true);
 check("outline toggle reflects the off state",
       $("#toggleOutline").classList.contains("on") === false);
 key("O", { ctrlKey: true, shiftKey: true });
 check("Ctrl+Shift+O brings it back", $(".pane-outline").hidden === false);
+
+// --- menu bar: every shortcut must also be a button ---
+check("menu bar rendered", $$(".menubar .menu").length >= 4,
+      `${$$(".menubar .menu").length} menus`);
+
+const menuCommands = new Set($$(".menu-item").map(i => i.dataset.command));
+const bound = window.eval("KEY_BINDINGS.map(b => b.command)");
+const unreachable = [...new Set(bound)].filter(c => !menuCommands.has(c));
+check("every key binding has a menu entry", unreachable.length === 0,
+      "missing: " + unreachable.join(", "));
+check("menu items show their shortcut",
+      $$(".menu-item .menu-keys").some(k => /Ctrl\+/.test(k.textContent)));
+
+// Opening a menu and clicking an item runs the command.
+$$(".menu-title")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("clicking a menu title opens it", $$(".menu.open").length === 1);
+
+const beforeMenuOpen = posted.filter(m => m.type === "pick-file").length;
+$(".menu-item[data-command='openFile']").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("a menu item runs its command",
+      posted.filter(m => m.type === "pick-file").length === beforeMenuOpen + 1);
+check("choosing an item closes the menu", $$(".menu.open").length === 0);
+
+// --- panel widths and swapping ---
+window.eval("Panels.resetWidths()");
+const widthOf = name => $(".body").style.getPropertyValue("--" + name + "-width");
+check("reset sets both panel widths", widthOf("sidebar") === "230px" && widthOf("outline") === "260px",
+      widthOf("sidebar") + " / " + widthOf("outline"));
+
+const orderBefore = [$("#sidebar").style.order, $("#panes").style.order, $(".pane-outline").style.order];
+$("#swapPanels").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+const orderAfter = [$("#sidebar").style.order, $("#panes").style.order, $(".pane-outline").style.order];
+check("swapping reorders the panels", orderBefore.join(",") !== orderAfter.join(","),
+      orderBefore.join(",") + " -> " + orderAfter.join(","));
+check("the document pane stays in the middle", orderAfter[1] === "3", orderAfter[1]);
+check("swap button reflects the state", $("#swapPanels").classList.contains("on"));
+
+$("#swapPanels").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("swapping back restores the original order",
+      [$("#sidebar").style.order, $("#panes").style.order, $(".pane-outline").style.order].join(",")
+      === orderBefore.join(","));
 
 // With no workspace bound there is nothing to show, so the button offers to pick one.
 const beforePick = posted.filter(m => m.type === "pick-folder").length;
@@ -735,7 +782,7 @@ function childOrder() {
   return [...$(".pane").children].map(c => c.className.split(" ")[0]);
 }
 
-const EXPECTED = ["tabstrip", "dochead", "pane-notice", "doc", "editor", "drop-hint"];
+const EXPECTED = ["tabstrip", "dochead", "pane-notice", "doc", "editor-wrap", "drop-hint"];
 
 send("doc-opened", editDoc("order check"));
 check("pane children are in the documented order",
