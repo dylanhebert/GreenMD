@@ -33,10 +33,16 @@ public partial class App : Application
             .FirstOrDefault(a => a.StartsWith("--dump-layout=", StringComparison.OrdinalIgnoreCase))
             ?["--dump-layout=".Length..];
 
-        if (dumpLayoutPath is not null)
+        // Streams state to disk on every change and leaves the window open, for
+        // diagnosing behaviour over time rather than a single snapshot.
+        var dumpStatePath = e.Args
+            .FirstOrDefault(a => a.StartsWith("--dump-state=", StringComparison.OrdinalIgnoreCase))
+            ?["--dump-state=".Length..];
+
+        if (dumpLayoutPath is not null || dumpStatePath is not null)
         {
             // A diagnostic run must never hand off to an existing window.
-            new MainWindow(path, dumpLayoutPath).Show();
+            new MainWindow(path, dumpLayoutPath, dumpStatePath).Show();
             return;
         }
 
@@ -54,7 +60,7 @@ public partial class App : Application
             }
         }
 
-        var window = new MainWindow(path, null);
+        var window = new MainWindow(path, null, null);
 
         _instance.FileRequested += requested =>
             window.Dispatcher.Invoke(() => window.HandleExternalRequest(requested));

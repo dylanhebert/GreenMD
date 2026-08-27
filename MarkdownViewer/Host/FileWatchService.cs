@@ -138,21 +138,59 @@ public sealed class FileWatchService : IDisposable
         Changed?.Invoke(fullPath);
     }
 
-    /// <summary>Buffer overflow means events were dropped; recheck everything here.</summary>
+    /// <summary>
+    /// The Error event means the watcher is no longer reliable — a dropped buffer, or the
+    /// directory handle going away underneath it, which happens on sync-backed folders.
+    /// Re-touching the files is not enough: if the watcher itself is dead it will never
+    /// report anything again. Rebuild it, then recheck everything it was covering.
+    /// </summary>
     private void RescanDirectory(string directory)
     {
         string[] files;
+
         lock (_gate)
         {
-            if (!_watches.TryGetValue(directory, out var watch)) return;
+            if (_disposed || !_watches.TryGetValue(directory, out var watch)) return;
+
             files = watch.Files.ToArray();
+
+            watch.Watcher.EnableRaisingEvents = false;
+            watch.Watcher.Dispose();
+            _watches.Remove(directory);
         }
 
+        // Watch() recreates the directory watcher on first use.
+        foreach (var file in files) Watch(file);
         foreach (var file in files) Touch(file);
+    }
+
+    /// <summary>
+    /// Verifies each watcher is still live and rebuilds any that are not. FileSystemWatcher
+    /// can stop delivering events without raising Error at all, which is the failure mode
+    /// behind "I edited the file and nothing happened" after an app has been open for hours.
+    /// </summary>
+    private void ReviveDeadWatchers()
+    {
+        List<string> broken = [];
+
+        lock (_gate)
+        {
+            if (_disposed) return;
+
+            foreach (var (directory, watch) in _watches)
+            {
+                if (!Directory.Exists(directory)) continue;
+                if (!watch.Watcher.EnableRaisingEvents) broken.Add(directory);
+            }
+        }
+
+        foreach (var directory in broken) RescanDirectory(directory);
     }
 
     private void PollOpenFiles()
     {
+        ReviveDeadWatchers();
+
         List<string> stale = [];
 
         lock (_gate)

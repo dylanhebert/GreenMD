@@ -1117,3 +1117,48 @@ host.addEventListener("message", (event) => {
     post("layout-dump", measureLayout());
   }));
 });
+
+// ---------- state diagnostic ----------
+//
+// Streams what the UI actually holds, so "the stamp did not update" can be traced to
+// either a missing host message or a UI that received one and did nothing with it.
+
+let stateDumping = false;
+const messageLog = [];
+
+function snapshotState() {
+  const panes = Layout.panes().map(pane => ({
+    id: pane.id,
+    active: pane.active,
+    tabs: pane.tabs.length,
+    headerStamp: (() => {
+      const el = panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"] .dochead-updated`);
+      return el ? { text: el.textContent, dataset: el.dataset.updated } : null;
+    })()
+  }));
+
+  return {
+    now: new Date().toISOString(),
+    panes,
+    docs: [...docs.values()].map(d => ({ path: d.path, loadedAt: d.loadedAt })),
+    recentMessages: messageLog.slice(-25)
+  };
+}
+
+// Record every inbound message type before anything else handles it.
+host.addEventListener("message", (event) => {
+  messageLog.push({
+    t: new Date().toISOString().slice(11, 23),
+    type: event.data.type,
+    path: event.data.payload && event.data.payload.path ? String(event.data.payload.path).split(/[\/]/).pop() : undefined,
+    loadedAt: event.data.payload && event.data.payload.loadedAt
+  });
+  if (messageLog.length > 200) messageLog.shift();
+
+  if (event.data.type !== "dump-state") return;
+  if (stateDumping) return;
+
+  stateDumping = true;
+  post("state-dump", snapshotState());
+  setInterval(() => post("state-dump", snapshotState()), 2000);
+});

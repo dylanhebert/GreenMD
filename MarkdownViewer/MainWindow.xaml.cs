@@ -20,12 +20,14 @@ public partial class MainWindow : Window
 
     private readonly string? _initialPath;
     private readonly string? _dumpLayoutPath;
+    private readonly string? _dumpStatePath;
     private bool _uiReady;
 
-    public MainWindow(string? initialPath, string? dumpLayoutPath)
+    public MainWindow(string? initialPath, string? dumpLayoutPath, string? dumpStatePath)
     {
         _initialPath = initialPath;
         _dumpLayoutPath = dumpLayoutPath;
+        _dumpStatePath = dumpStatePath;
         InitializeComponent();
         Native.UseDarkTitleBar(this);
 
@@ -162,6 +164,10 @@ public partial class MainWindow : Window
                 WriteLayoutDump(payload);
                 break;
 
+            case "state-dump":
+                WriteStateDump(payload);
+                break;
+
             case "set-title":
                 UpdateTitle(payload.ValueKind == JsonValueKind.String ? payload.GetString() : null);
                 break;
@@ -211,6 +217,31 @@ public partial class MainWindow : Window
         }
 
         if (_dumpLayoutPath is not null) Post("dump-layout", new { });
+        if (_dumpStatePath is not null) Post("dump-state", new { });
+    }
+
+    /// <summary>
+    /// Appends a state snapshot from the UI. Unlike the layout dump this leaves the
+    /// window open, so behaviour over time -- did a watcher event actually arrive? --
+    /// can be observed instead of inferred.
+    /// </summary>
+    private void WriteStateDump(JsonElement snapshot)
+    {
+        if (_dumpStatePath is null) return;
+
+        try
+        {
+            var line = JsonSerializer.Serialize(new
+            {
+                at = DateTimeOffset.Now.ToString("HH:mm:ss.fff"),
+                hostWatching = _documents.OpenPaths.ToArray(),
+                ui = snapshot
+            }, JsonOptions);
+
+            File.AppendAllText(_dumpStatePath, line + Environment.NewLine);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     /// <summary>Writes the UI's own measurements of the real window to disk, then exits.</summary>
@@ -259,14 +290,20 @@ public partial class MainWindow : Window
         catch (NotSupportedException) { return null; }
         catch (PathTooLongException) { return null; }
 
-        if (!File.Exists(full))
-        {
-            Post("error", new { message = $"Not found: {full}" });
-            return null;
-        }
-
         var directory = Path.GetDirectoryName(full);
         if (directory is not null) _assets.AllowRoot(directory);
+
+        // A missing file still gets a document and a watcher. Bailing out here left the
+        // tab in limbo -- no document, no watcher, and no way to recover when the file
+        // came back, so nothing that happened to it afterwards was ever noticed.
+        if (!File.Exists(full))
+        {
+            Post("error", new { message = $"Not found: {Path.GetFileName(full)}" });
+
+            var placeholder = await _documents.LoadAsync(full);
+            _watcher.Watch(full);
+            return placeholder;
+        }
 
         // A cloud-only file blocks on a network download. Tell the UI first so the
         // tab appears immediately instead of the window seeming to hang.
@@ -465,6 +502,7 @@ public partial class MainWindow : Window
             var document = _documents.Get(path);
             if (document is null) return;
 
+            LogState($"host posting doc-updated for {Path.GetFileName(path)} hash={document.Hash[..8]}");
             Post("doc-updated", Describe(document));
         });
     }
@@ -526,6 +564,21 @@ public partial class MainWindow : Window
 
         try { Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true }); }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { }
+    }
+
+    /// <summary>Host-side note in the same stream as the UI snapshots.</summary>
+    private void LogState(string note)
+    {
+        if (_dumpStatePath is null) return;
+
+        try
+        {
+            File.AppendAllText(_dumpStatePath,
+                JsonSerializer.Serialize(new { at = DateTimeOffset.Now.ToString("HH:mm:ss.fff"), note }, JsonOptions)
+                + Environment.NewLine);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private void Post(string type, object payload) =>
