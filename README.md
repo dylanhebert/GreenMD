@@ -115,3 +115,8 @@ exits. The second stays open and streams what the host is watching and what the 
 holds, so "the event never arrived" can be told apart from "the UI ignored it".
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for how it is put together and why.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). The vendored copy of Mermaid is MIT as well; Markdig is
+BSD-2-Clause.
