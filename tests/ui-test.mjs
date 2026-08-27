@@ -1676,6 +1676,43 @@ mScroller().querySelector('img[alt="linked"]')
   .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 check("an image inside a link does not open the lightbox", $("#lightbox").hidden === true);
 
+// --- pasting screenshots into the editor ---
+key("e", { ctrlKey: true });
+send("doc-text", { path: MARK, text: "# W\n\nnotes\n" });
+const mEditor = () => tabFor(MARK).closest(".pane").querySelector("textarea.editor");
+
+function pasteEvent(items) {
+  const event = new window.Event("paste", { bubbles: true, cancelable: true });
+  event.clipboardData = { items };
+  return event;
+}
+
+const beforePaste = posted.filter(m => m.type === "paste-image").length;
+const imagePaste = pasteEvent([{ type: "image/png" }]);
+mEditor().dispatchEvent(imagePaste);
+const pasteMsg = posted.filter(m => m.type === "paste-image").pop();
+check("pasting an image asks the host to write it",
+      posted.filter(m => m.type === "paste-image").length === beforePaste + 1
+      && imagePaste.defaultPrevented && pasteMsg?.payload?.path === MARK,
+      JSON.stringify(pasteMsg?.payload));
+check("the paste names the pane, so the reply lands in the right editor",
+      typeof pasteMsg?.payload?.paneId === "string" && pasteMsg.payload.paneId.length > 0);
+
+const textPaste = pasteEvent([{ type: "text/plain" }]);
+mEditor().dispatchEvent(textPaste);
+check("a text paste is left to the browser",
+      !textPaste.defaultPrevented
+      && posted.filter(m => m.type === "paste-image").length === beforePaste + 1);
+
+mEditor().selectionStart = mEditor().selectionEnd = 0;
+send("image-pasted", { path: MARK, paneId: pasteMsg.payload.paneId,
+                       markdown: "![screenshot](assets/image-test.png)" });
+check("the reply inserts the markdown link at the cursor",
+      mEditor().value.startsWith("![screenshot](assets/image-test.png)\n"),
+      mEditor().value.slice(0, 60));
+check("the inserted link marks the buffer dirty",
+      !!tabFor(MARK).closest(".pane").querySelector(".tab.dirty"));
+
 // --- report ---
 console.log("");
 for (const r of results) {

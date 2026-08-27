@@ -202,6 +202,10 @@ public partial class MainWindow : Window
                 if (payload.ValueKind == JsonValueKind.Object) await ToggleTaskAsync(payload);
                 break;
 
+            case "paste-image":
+                if (payload.ValueKind == JsonValueKind.Object) PasteImage(payload);
+                break;
+
             case "layout-dump":
                 WriteLayoutDump(payload);
                 break;
@@ -433,6 +437,80 @@ public partial class MainWindow : Window
         var document = _documents.Get(path);
         if (document is not null) Post("doc-updated", Describe(document));
         SyncAssetWatches();
+    }
+
+    /// <summary>
+    /// Writes the clipboard image to an assets folder next to the document and tells
+    /// the UI what markdown to insert. The bytes never cross the bridge: the UI only
+    /// says "the user pasted an image here", and the host reads the clipboard itself.
+    /// </summary>
+    private void PasteImage(JsonElement request)
+    {
+        if (!request.TryGetProperty("path", out var pathElement)
+            || pathElement.GetString() is not { Length: > 0 } docPath)
+        {
+            return;
+        }
+
+        var paneId = request.TryGetProperty("paneId", out var pane) ? pane.GetString() : null;
+
+        string? directory;
+        try { directory = Path.GetDirectoryName(DocumentStore.Normalize(docPath)); }
+        catch (ArgumentException) { return; }
+
+        if (string.IsNullOrEmpty(directory)) return;
+
+        var png = ClipboardPng();
+        if (png is null)
+        {
+            Post("error", new { message = "The clipboard has no image to paste." });
+            return;
+        }
+
+        try
+        {
+            var assetDirectory = Path.Combine(directory, "assets");
+            Directory.CreateDirectory(assetDirectory);
+
+            var stem = $"image-{DateTime.Now:yyyyMMdd-HHmmss}";
+            var file = Path.Combine(assetDirectory, stem + ".png");
+            for (var n = 2; File.Exists(file); n++)
+                file = Path.Combine(assetDirectory, $"{stem}-{n}.png");
+
+            File.WriteAllBytes(file, png);
+
+            Post("image-pasted", new
+            {
+                path = docPath,
+                paneId,
+                markdown = $"![screenshot](assets/{Path.GetFileName(file)})"
+            });
+        }
+        catch (IOException) { Post("error", new { message = "Could not save the pasted image." }); }
+        catch (UnauthorizedAccessException) { Post("error", new { message = "Could not save the pasted image." }); }
+    }
+
+    /// <summary>
+    /// PNG bytes from the clipboard. The "PNG" format -- what Snip &amp; Sketch and most
+    /// capture tools set -- is preferred, because the DIB fallback loses transparency.
+    /// </summary>
+    private static byte[]? ClipboardPng()
+    {
+        try
+        {
+            if (Clipboard.GetData("PNG") is MemoryStream pngStream) return pngStream.ToArray();
+
+            if (!Clipboard.ContainsImage()) return null;
+            var image = Clipboard.GetImage();
+            if (image is null) return null;
+
+            var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+            encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(image));
+            using var buffer = new MemoryStream();
+            encoder.Save(buffer);
+            return buffer.ToArray();
+        }
+        catch (System.Runtime.InteropServices.ExternalException) { return null; }
     }
 
     /// <summary>

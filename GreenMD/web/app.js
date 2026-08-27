@@ -1255,6 +1255,27 @@ panesEl.addEventListener("auxclick", (event) => {
   requestCloseTab(paneEl.dataset.paneId, tab.dataset.path);
 });
 
+// ---------- pasting screenshots ----------
+
+// A clipboard image pasted into the editor becomes a file next to the doc plus a
+// markdown link, instead of nothing. The host reads the clipboard itself -- the
+// bytes never cross the bridge -- and answers with image-pasted once written.
+panesEl.addEventListener("paste", (event) => {
+  const editor = event.target.closest("textarea.editor");
+  if (!editor) return;
+
+  const hasImage = [...(event.clipboardData?.items || [])]
+    .some(item => item.type.startsWith("image/"));
+  if (!hasImage) return;
+
+  const paneEl = editor.closest(".pane");
+  const pane = paneEl ? Layout.pane(paneEl.dataset.paneId) : null;
+  if (!pane || !pane.active) return;
+
+  event.preventDefault();
+  post("paste-image", { path: pane.active, paneId: pane.id });
+});
+
 // ---------- tab context menu ----------
 
 let contextMenuEl = null;
@@ -1613,6 +1634,28 @@ host.addEventListener("message", (event) => {
 
       renderAll({ keepAnchors: false });
       syncOpenPaths();
+      break;
+    }
+
+    case "image-pasted": {
+      const pane = Layout.pane(payload.paneId);
+      if (!pane || pane.active !== payload.path) break;
+
+      const editor = panesEl.querySelector(
+        `[data-pane-id="${CSS.escape(pane.id)}"] textarea.editor`);
+      if (!editor) break;
+
+      editor.focus();
+      const inserted = payload.markdown + "\n";
+
+      // execCommand keeps the textarea's native undo stack intact; jsdom and any
+      // future engine without it fall back to a direct splice.
+      const usedCommand = typeof document.execCommand === "function"
+        && document.execCommand("insertText", false, inserted);
+      if (!usedCommand) {
+        editor.setRangeText(inserted, editor.selectionStart, editor.selectionEnd, "end");
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      }
       break;
     }
 
