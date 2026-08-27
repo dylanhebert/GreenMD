@@ -824,32 +824,71 @@ function diffBlocks(oldBlocks, newBlocks) {
 
   // Consecutive edits form a run. Within one, inserts pair off against deletes as
   // rewrites, the surplus inserts are additions, and surplus deletes leave one
-  // removal seam at the top of the run.
+  // removal seam at the top of the run. `pairs` records which old block each
+  // rewrite replaced, so a rewritten list can be diffed again at item level.
   const modified = new Set(), added = new Set(), removedBefore = new Set();
-  let runStart = null, runDeletes = 0;
-  const runInserts = [];
+  const pairs = new Map();
+  let runStart = null;
+  const runInserts = [], runDeletes = [];
 
   const closeRun = () => {
     if (runStart === null) return;
-    const pairs = Math.min(runDeletes, runInserts.length);
-    runInserts.forEach((index, n) => (n < pairs ? modified : added).add(index));
-    if (runDeletes > pairs) removedBefore.add(runStart);
-    runStart = null; runDeletes = 0; runInserts.length = 0;
+    const pairCount = Math.min(runDeletes.length, runInserts.length);
+    runInserts.forEach((index, n) => {
+      if (n < pairCount) { modified.add(index); pairs.set(index, runDeletes[n]); }
+      else added.add(index);
+    });
+    if (runDeletes.length > pairCount) removedBefore.add(runStart);
+    runStart = null; runInserts.length = 0; runDeletes.length = 0;
   };
 
   let i = 0, j = 0;
   while (i < rows && j < cols) {
     if (oldBlocks[start + i] === newBlocks[start + j]) { closeRun(); i++; j++; continue; }
     if (runStart === null) runStart = start + j;
-    if (lcs[i + 1][j] >= lcs[i][j + 1]) { runDeletes++; i++; }
+    if (lcs[i + 1][j] >= lcs[i][j + 1]) { runDeletes.push(start + i); i++; }
     else { runInserts.push(start + j); j++; }
   }
   while (j < cols) { if (runStart === null) runStart = start + j; runInserts.push(start + j); j++; }
-  if (i < rows) { if (runStart === null) runStart = start + j; runDeletes += rows - i; }
+  while (i < rows) { if (runStart === null) runStart = start + j; runDeletes.push(start + i); i++; }
   closeRun();
 
-  return { modified, added, removedBefore,
+  return { modified, added, removedBefore, pairs,
            count: modified.size + added.size + removedBefore.size };
+}
+
+function elementOf(html) {
+  const holder = document.createElement("template");
+  holder.innerHTML = html;
+  return holder.content.firstElementChild;
+}
+
+/**
+ * The full diff: blocks first, then one level deeper for lists. A rewritten list
+ * is re-diffed item by item, so appending one entry to a 30-item plan marks that
+ * entry rather than lighting the whole list.
+ */
+function diffDocument(oldHtml, newHtml) {
+  const oldBlocks = blocksOf(oldHtml), newBlocks = blocksOf(newHtml);
+  const marks = diffBlocks(oldBlocks, newBlocks);
+  marks.lists = new Map();
+
+  for (const [newIndex, oldIndex] of marks.pairs) {
+    const oldEl = elementOf(oldBlocks[oldIndex]);
+    const newEl = elementOf(newBlocks[newIndex]);
+    if (!oldEl || !newEl || oldEl.tagName !== newEl.tagName) continue;
+    if (newEl.tagName !== "UL" && newEl.tagName !== "OL") continue;
+
+    const itemDiff = diffBlocks(
+      [...oldEl.children].map(li => li.outerHTML),
+      [...newEl.children].map(li => li.outerHTML));
+    if (itemDiff.count === 0) continue;   // the list element itself changed, not its items
+
+    marks.lists.set(newIndex, itemDiff);
+    marks.modified.delete(newIndex);
+    marks.count += itemDiff.count - 1;
+  }
+  return marks;
 }
 
 function noteDocChanged(path, html) {
@@ -864,7 +903,7 @@ function noteDocChanged(path, html) {
   if (baseline === undefined) { changeBaselines.set(path, html); return; }
   if (baseline === html) { changeMarks.delete(path); return; }
 
-  changeMarks.set(path, diffBlocks(blocksOf(baseline), blocksOf(html)));
+  changeMarks.set(path, diffDocument(baseline, html));
 }
 
 function dismissChangeMarks(path) {
@@ -893,6 +932,23 @@ function applyChangeMarks(scroller, path) {
   const blocks = [...scroller.children];
   for (const index of marks.modified) blocks[index]?.classList.add("changed-block");
   for (const index of marks.added) blocks[index]?.classList.add("added-block");
+
+  for (const [blockIndex, itemDiff] of marks.lists ?? []) {
+    const list = blocks[blockIndex];
+    if (!list) continue;
+
+    const items = [...list.children];
+    for (const index of itemDiff.modified) items[index]?.classList.add("changed-item");
+    for (const index of itemDiff.added) items[index]?.classList.add("added-item");
+
+    for (const index of itemDiff.removedBefore) {
+      const seam = document.createElement("li");
+      seam.className = "removed-mark-item";
+      seam.title = "List items that were here have been removed";
+      if (index < items.length) list.insertBefore(seam, items[index]);
+      else list.append(seam);
+    }
+  }
 
   for (const index of marks.removedBefore) {
     const seam = document.createElement("div");

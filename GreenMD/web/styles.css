@@ -322,6 +322,20 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
   border-top: 2px dashed #b0605f;
 }
 
+/* Item-level marks inside a rewritten list: the marker carries the color and the
+   item a faint tint, keeping the gutter clear of the numbers. */
+.doc li.changed-item { background: rgba(208, 161, 63, .07); border-radius: 4px; }
+.doc li.changed-item::marker { color: var(--changed); }
+.doc li.added-item { background: rgba(92, 169, 79, .08); border-radius: 4px; }
+.doc li.added-item::marker { color: var(--added); }
+
+.doc li.removed-mark-item {
+  list-style: none;
+  height: 0;
+  margin: 8px 0;
+  border-top: 2px dashed #b0605f;
+}
+
 .dochead-changes {
   padding: 1px 8px;
   font-family: inherit;

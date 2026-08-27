@@ -1556,6 +1556,32 @@ check("the visibility choice is persisted with the session",
 toggleMarks.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 key("m", { ctrlKey: true });
 
+// --- item-level marks inside lists ---
+send("doc-updated", markPayload('<h1 id="w">W</h1><ol><li>one</li><li>two</li></ol>'));
+key("m", { ctrlKey: true });   // the list itself is old news; diff from here
+
+send("doc-updated", markPayload('<h1 id="w">W</h1><ol><li>one</li><li>two!</li><li>three</li></ol>'));
+check("a rewritten list gets no whole-block bar",
+      mScroller().querySelectorAll(".changed-block, .added-block").length === 0);
+const listItems = () => [...mScroller().querySelectorAll("ol > li")];
+check("a rewritten item is marked at item level",
+      listItems().find(li => li.textContent === "two!")?.classList.contains("changed-item") === true);
+check("an appended item is marked as added at item level",
+      listItems().find(li => li.textContent === "three")?.classList.contains("added-item") === true);
+check("untouched items stay unmarked",
+      listItems().find(li => li.textContent === "one")?.className === "");
+check("the chip counts the items, not the list",
+      mChip().textContent.startsWith("2 changes"), mChip().textContent);
+
+// Removing items leaves a seam inside the list, not around it.
+key("m", { ctrlKey: true });
+send("doc-updated", markPayload('<h1 id="w">W</h1><ol><li>one</li></ol>'));
+check("removed items leave a seam inside the list",
+      mScroller().querySelectorAll("ol li.removed-mark-item").length === 1
+      && mScroller().querySelectorAll(".changed-block, .added-block, .removed-mark").length === 0,
+      mChip().textContent);
+key("m", { ctrlKey: true });
+
 // --- report ---
 console.log("");
 for (const r of results) {
