@@ -34,6 +34,11 @@ jobs:
       - name: Lint sources
         run: node tests/lint-sources.mjs
 
+      # Vendored code is committed rather than fetched, which only means anything if
+      # the file still matches what was reviewed.
+      - name: Verify vendored dependencies
+        run: node tests/verify-vendor.mjs
+
       - name: Run UI tests
         run: node tests/ui-test.mjs
 

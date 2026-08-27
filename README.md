@@ -41,6 +41,8 @@ Pick GreenMD and tick "always use this app". That is one click, not a bug.
 - **Task checkboxes actually work.** Ticking one rewrites the markdown and saves.
 - **Ctrl+E** switches a pane to highlighted markdown source; **Ctrl+S** saves. There is
   no autosave, deliberately.
+- **Mermaid diagrams render.** ` ```mermaid ` fences are drawn rather than shown as
+  source, and a diagram that will not parse keeps its source visible with the reason.
 - Everything reachable by keyboard is also in the menu bar.
 
 ## Dependencies
@@ -52,10 +54,23 @@ Two NuGet packages, both with no transitive dependencies of their own:
 | [Markdig](https://github.com/xoofx/markdig) | BSD-2-Clause | markdown to HTML |
 | Microsoft.Web.WebView2 | Microsoft | the rendering surface, already present on Windows 11 |
 
-**No third-party JavaScript.** The syntax highlighter, the layout engine, the editor and
-the fuzzy file search are all written for this project. That is a deliberate constraint:
-this runs on work machines, and a dependency that is small enough to read is worth more
-than one that covers more cases.
+One vendored JavaScript library, committed rather than fetched at build time:
+
+| Library | Licence | Purpose |
+|---|---|---|
+| [Mermaid](https://mermaid.js.org) 11.4.1 | MIT | drawing ` ```mermaid ` diagrams |
+
+It is the only one. The syntax highlighter, layout engine, editor and fuzzy file search
+are written for this project, because a dependency small enough to read is worth more
+than one that covers more cases. Mermaid is the exception: rendering its diagrams means
+implementing a graph layout engine, which is not a reasonable thing to hand-roll.
+
+Before vendoring it was audited for `eval`, `new Function`, network calls, dynamic
+imports and remote URLs. It has none, so it runs under the app's existing
+`script-src 'self'` policy with no loosening. It is loaded only when a document actually
+contains a diagram. `GreenMD/web/vendor/README.md` records its origin and SHA-256, and
+`node tests/verify-vendor.mjs` checks the file still matches -- in CI as well as
+locally, so committing it means something.
 
 `NuGet.config` pins restore to nuget.org, so a machine configured against a private feed
 does not need credentials to build this.
@@ -80,8 +95,7 @@ ships.
 ```
 dotnet build GreenMD.sln
 npm install --prefix tests
-node tests/lint-sources.mjs
-node tests/ui-test.mjs
+npm test --prefix tests
 ```
 
 `tools/Publish.ps1 -Register` installs to `%LOCALAPPDATA%\Programs\GreenMD` and

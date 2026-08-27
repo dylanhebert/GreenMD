@@ -5,9 +5,10 @@
   "type": "module",
   "description": "Test-only tooling for GreenMD. Nothing here ships with the application: the app itself has no JavaScript dependencies at all.",
   "scripts": {
-    "test": "node lint-sources.mjs && node ui-test.mjs",
+    "test": "node lint-sources.mjs && node verify-vendor.mjs && node ui-test.mjs",
     "lint": "node lint-sources.mjs",
-    "ui": "node ui-test.mjs"
+    "ui": "node ui-test.mjs",
+    "vendor": "node verify-vendor.mjs"
   },
   "devDependencies": {
     "jsdom": "^25.0.0"

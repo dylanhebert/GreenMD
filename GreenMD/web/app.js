@@ -156,7 +156,9 @@ function rememberAnchors() {
 // ---------- content painting ----------
 
 function addCopyButtons(root) {
-  for (const pre of root.querySelectorAll("pre")) {
+  // Not on diagram sources. The button's own label would otherwise be swept up by
+  // textContent and fed to the parser as part of the diagram.
+  for (const pre of root.querySelectorAll("pre:not(.mermaid)")) {
     const button = document.createElement("button");
     button.className = "copy";
     button.type = "button";
@@ -173,6 +175,125 @@ function addCopyButtons(root) {
     });
     pre.append(button);
   }
+}
+
+// ---------- mermaid ----------
+//
+// Loaded on first use rather than at startup: it is 2.5MB, and most documents have
+// no diagrams in them. Vendored and served from the app's own origin, so it runs
+// under script-src 'self' and reaches no network.
+
+let mermaidLoading = null;
+
+function ensureMermaid() {
+  if (window.mermaid) return Promise.resolve(window.mermaid);
+  if (mermaidLoading) return mermaidLoading;
+
+  mermaidLoading = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "/vendor/mermaid.min.js";
+    script.addEventListener("load", () => {
+      if (!window.mermaid) { reject(new Error("mermaid did not register")); return; }
+
+      window.mermaid.initialize({
+        startOnLoad: false,
+        theme: "dark",
+        // Document content, so never fully trusted: antiscript keeps the <b> and
+        // <br/> that real diagrams use for labels while stripping script. The page's
+        // own script-src 'self' policy blocks inline handlers regardless.
+        securityLevel: "antiscript",
+        darkMode: true,
+        fontFamily: '"Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif',
+        themeVariables: {
+          background: "#1e1e1c",
+          primaryColor: "#23312c",
+          primaryTextColor: "#e8e6e0",
+          primaryBorderColor: "#01a982",
+          lineColor: "#6f6d67",
+          secondaryColor: "#23231f",
+          tertiaryColor: "#1a1a18"
+        }
+      });
+      resolve(window.mermaid);
+    });
+    script.addEventListener("error", () => reject(new Error("could not load mermaid")));
+    document.head.append(script);
+  });
+
+  return mermaidLoading;
+}
+
+let mermaidSequence = 0;
+
+/**
+ * Replaces mermaid fences with rendered diagrams. Failures leave the source
+ * visible with the reason attached rather than an empty box -- a diagram that
+ * will not parse is usually a typo the reader can see and fix.
+ */
+async function renderMermaid(scroller) {
+  // Markdig's advanced extensions include its Diagrams extension, which turns a
+  // ```mermaid fence into <pre class="mermaid">source</pre> rather than an ordinary
+  // code block. The div and code-block forms are accepted too, so this keeps working
+  // if that extension is ever dropped from the pipeline.
+  const blocks = [
+    ...scroller.querySelectorAll("pre.mermaid:not([data-drawn]), div.mermaid:not([data-drawn])"),
+    ...scroller.querySelectorAll("pre > code.language-mermaid")
+  ];
+  if (blocks.length === 0) return;
+
+  let mermaid;
+  try {
+    mermaid = await ensureMermaid();
+  } catch (error) {
+    for (const block of blocks) markMermaidError(block.parentElement, error.message);
+    return;
+  }
+
+  for (const block of blocks) {
+    // A code-block fence replaces its <pre>; a Markdig diagram div replaces itself.
+    const host = block.tagName === "CODE" ? block.parentElement : block;
+    if (!host || !host.isConnected) continue;
+
+    const source = block.textContent || "";
+    if (!source.trim()) continue;
+
+    mermaidSequence += 1;
+
+    try {
+      const { svg } = await mermaid.render("greenmd-mermaid-" + mermaidSequence, source);
+
+      const figure = document.createElement("div");
+      figure.className = "mermaid-figure";
+      figure.dataset.drawn = "1";
+      figure.innerHTML = svg;
+      host.replaceWith(figure);
+    } catch (error) {
+      markMermaidError(host, error && error.message ? error.message : String(error));
+    }
+  }
+}
+
+function markMermaidError(host, message) {
+  if (!host || !host.isConnected) return;
+
+  // Keep the source readable rather than leaving an empty box: a diagram that will
+  // not parse is usually a typo the reader can see.
+  if (host.tagName === "DIV") {
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.textContent = host.textContent || "";
+    pre.append(code);
+    host.replaceWith(pre);
+    host = pre;
+  }
+
+  host.classList.add("mermaid-failed");
+  host.dataset.drawn = "1";
+
+  const note = document.createElement("div");
+  note.className = "mermaid-error";
+  note.textContent = "Diagram could not be drawn: " + message;
+  host.parentElement?.insertBefore(note, host);
 }
 
 function paintDoc(pane) {
@@ -192,6 +313,7 @@ function paintDoc(pane) {
   scroller.innerHTML = doc.html;
   HL.highlightAll(scroller);
   addCopyButtons(scroller);
+  renderMermaid(scroller);
   restoreAnchor(scroller, pane.anchors[pane.active]);
 
   // A live reload replaces the DOM and takes the highlights with it.
@@ -1539,6 +1661,14 @@ function measureLayout() {
             .filter(c => !c.hidden)
             .reduce((sum, c) => sum + box(c).w, 0) - box(body).w) <= 2
         : null
+    },
+    mermaid: {
+      rendered: document.querySelectorAll(".mermaid-figure svg").length,
+      failed: document.querySelectorAll(".mermaid-failed").length,
+      unprocessed: document.querySelectorAll(
+        "pre.mermaid:not([data-drawn]), div.mermaid:not([data-drawn]), pre > code.language-mermaid").length,
+      loaded: !!window.mermaid,
+      errors: [...document.querySelectorAll(".mermaid-error")].map(e => e.textContent)
     },
     outline: {
       count: links.length,

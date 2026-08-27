@@ -1031,3 +1031,30 @@ mark.find-current {
   line-height: 1.6;
 }
 .about-deps strong { color: var(--text-dim); font-weight: 600; }
+
+/* ---------- mermaid diagrams ---------- */
+
+.mermaid-figure {
+  margin: 0 0 1em;
+  padding: 14px;
+  overflow-x: auto;
+  text-align: center;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.mermaid-figure svg { max-width: 100%; height: auto; }
+
+/* A diagram that will not parse keeps its source visible, flagged. */
+.doc pre.mermaid-failed { border-color: #7a5a2a; }
+
+.mermaid-error {
+  margin: 0 0 -1px;
+  padding: 5px 12px;
+  font-size: 11px;
+  color: #e5c07b;
+  background: #2a2618;
+  border: 1px solid #7a5a2a;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+}

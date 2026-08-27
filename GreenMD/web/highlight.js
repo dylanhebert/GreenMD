@@ -148,6 +148,9 @@ window.HL = (() => {
     yml: "yaml",
     toml: "ini", conf: "ini", properties: "ini", env: "ini",
     patch: "diff",
+    // Deliberately absent from `rules`: a mermaid fence is replaced by a rendered
+    // diagram, so highlighting its source would only ever be seen if that failed.
+    mmd: "mermaid",
     md: "markdown", mkd: "markdown", markdown: "markdown"
   };
 

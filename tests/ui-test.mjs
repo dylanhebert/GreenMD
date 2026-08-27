@@ -968,6 +968,56 @@ check("about reports the association state", aboutText.includes("registered"));
 key("Escape");
 check("Escape closes about", $("#aboutBox").hidden === true);
 
+// --- mermaid ---
+// jsdom cannot lay out an SVG, so mermaid itself is stubbed. What is worth pinning
+// here is the wiring: that the right elements are found, that the diagram source is
+// not polluted, and that a failure leaves the source readable.
+window.mermaid = {
+  initialize() {},
+  async render(id, source) {
+    if (source.includes("BROKEN")) throw new Error("Parse error on line 1");
+    return { svg: '<svg data-src="' + source.trim() + '"><g/></svg>' };
+  }
+};
+
+const MERMAID_PATH = "C:" + SEP + "diagrams" + SEP + "flow.md";
+send("doc-opened", {
+  path: MERMAID_PATH, title: "flow.md", folder: "C:" + SEP + "diagrams",
+  // Markdig's Diagrams extension emits pre.mermaid, not a code block.
+  html: '<h1 id="f">Flow</h1>' +
+        '<pre class="mermaid">flowchart TB' + String.fromCharCode(10) + '  A --> B</pre>' +
+        '<pre><code class="language-csharp">var x = 1;</code></pre>',
+  outline: [{ level: 1, text: "Flow", id: "f" }],
+  missing: false, loadedAt: new Date().toISOString()
+});
+
+check("a diagram source gets no copy button",
+      $(".pane .doc pre.mermaid .copy") === null || $(".pane .doc pre.mermaid") === null);
+check("an ordinary code block still gets one",
+      $$(".pane .doc pre:not(.mermaid) .copy").length === 1);
+
+await new Promise(r => setTimeout(r, 60));
+check("the diagram is replaced by rendered output",
+      $$(".pane .doc .mermaid-figure svg").length === 1,
+      `${$$(".pane .doc .mermaid-figure svg").length} figures`);
+check("the diagram source reached mermaid unpolluted",
+      ($(".pane .doc .mermaid-figure svg")?.dataset.src || "").endsWith("A --> B"),
+      $(".pane .doc .mermaid-figure svg")?.dataset.src);
+
+// A diagram that will not parse keeps its source visible with the reason.
+send("doc-updated", {
+  path: MERMAID_PATH, title: "flow.md", folder: "C:" + SEP + "diagrams",
+  html: '<h1 id="f">Flow</h1><pre class="mermaid">BROKEN</pre>',
+  outline: [{ level: 1, text: "Flow", id: "f" }],
+  missing: false, loadedAt: new Date().toISOString()
+});
+await new Promise(r => setTimeout(r, 60));
+check("a failed diagram explains itself",
+      ($(".pane .doc .mermaid-error")?.textContent || "").includes("Parse error"),
+      $(".pane .doc .mermaid-error")?.textContent);
+check("a failed diagram keeps its source readable",
+      ($(".pane .doc pre.mermaid-failed")?.textContent || "").includes("BROKEN"));
+
 // --- pane child order ---
 // DOM order needs no layout, so unlike the geometry bugs this IS testable here.
 // It broke because refreshPaneChrome appended rebuilt chrome and then moved the
