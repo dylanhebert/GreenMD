@@ -330,6 +330,27 @@ Three rules protect the file:
   would show up in git as a change to every line. Writes go via a temp file and a
   rename so a crash cannot truncate the original.
 
+The first rule is enforced **in the UI**, and that is not where it looks like it should
+live. The host has a conflict check too, and it does not fire. It compares the file on
+disk against `Document.Hash` — but that hash exists to deduplicate watcher events, so a
+live reload refreshes it. Once the watcher has seen the external change the host is
+comparing disk against itself, finds them equal, reports no conflict, and writes. Both
+save paths in the UI therefore refuse to send an unforced save while the buffer is
+flagged stale, and only "Keep mine" passes `force`.
+
+This was found by driving the real app: edit a file, let another program write to it,
+press Ctrl+S, and the other program's text was gone with no warning. jsdom could not
+have caught it, because every existing conflict test began by handing the UI a
+`save-result` that already said `conflict: true` — they tested the reporting of a
+conflict and never the detecting of one. The regression tests now press Ctrl+S on a
+stale buffer and assert no unforced save leaves the UI at all.
+
+Fixing `Document.Hash` properly means separating the watcher-dedup hash from the
+"what was this edit based on" hash. It is worth doing, and it is not done, because the
+checkbox-toggle path saves from `RawText` and would start reporting false conflicts
+against a stale baseline. There is no C# test project to catch that, which is the real
+blocker.
+
 ### Saving is explicit
 
 There is no autosave. Ctrl+S, or nothing happens — a viewer that writes to files on its

@@ -523,6 +523,38 @@ check("external change does not overwrite unsaved text",
       $(".pane .editor")?.value === SRC_MINE,
       JSON.stringify($(".pane .editor")?.value));
 
+// The regression that actually cost data. Everything above only ever exercised the
+// conflict path by handing the UI a save-result that already said conflict:true. The
+// case nobody tested was pressing Ctrl+S once the buffer had gone stale, and it used
+// to post an ordinary unforced save. That is not harmless: the host decides conflicts
+// by comparing the file against the hash it last read from disk, and the live reload
+// had already refreshed that hash, so it compared disk against itself, found no
+// conflict, and wrote straight over the external edit. Reproduced against the real
+// running app -- text written by another program was destroyed with no warning. The UI
+// is the side that still knows the buffer was based on older text, so it stops here.
+const beforeStaleSave = posted.filter(m => m.type === "save-doc").length;
+key("s", { ctrlKey: true });
+const staleSaves = posted.filter(m => m.type === "save-doc").slice(beforeStaleSave);
+check("Ctrl+S on a stale buffer sends no unforced save",
+      staleSaves.every(m => m.payload && m.payload.force === true),
+      JSON.stringify(staleSaves.map(m => m.payload && m.payload.force)));
+check("Ctrl+S on a stale buffer still shows the conflict notice",
+      $(".pane .pane-notice")?.hidden === false);
+check("Ctrl+S on a stale buffer keeps the user's text",
+      $(".pane .editor")?.value === SRC_MINE);
+
+// Deliberate overwrite has to keep working, or the fix has just broken the escape
+// hatch instead of the bug.
+const beforeForced = posted.filter(m => m.type === "save-doc").length;
+$$(".pane .pane-notice button").find(b => b.textContent === "Keep mine")?.click();
+const forced = posted.filter(m => m.type === "save-doc").pop();
+check("Keep mine still forces the save through",
+      posted.filter(m => m.type === "save-doc").length === beforeForced + 1
+      && forced?.payload?.force === true,
+      JSON.stringify(forced?.payload && forced.payload.force));
+
+send("save-result", { path: EDIT_PATH, saved: true, conflict: false });
+
 key("e", { ctrlKey: true });
 check("Ctrl+E returns to the rendered view", $(".pane .doc")?.hidden === false);
 
@@ -918,11 +950,58 @@ check("a failed write abandons the close rather than losing the text",
       posted.filter(m => m.type === "close-approved").length === approvals);
 check("the text survives a failed exit save", $(".pane .editor")?.value === SRC_MINE);
 
+// A reported conflict leaves the buffer stale, and retrying "Save all" must not quietly
+// write it anyway -- that used to be the escape hatch straight back into the overwrite.
+// The conflict has to be resolved on its own terms first.
+const beforeRetry = posted.filter(m => m.type === "save-doc").length;
+send("confirm-close", {});
+$("#exitSave").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("retrying save all after a conflict sends no unforced save",
+      posted.filter(m => m.type === "save-doc").slice(beforeRetry)
+        .every(m => m.payload && m.payload.force === true));
+check("retrying save all after a conflict does not close",
+      posted.filter(m => m.type === "close-approved").length === approvals);
+
+// Resolve it the way the notice asks, then a clean save-all closes the window.
+$$(".pane .pane-notice button").find(b => b.textContent === "Keep mine")?.click();
+send("save-result", { path: EXIT_PATH, saved: true, conflict: false });
+check("Keep mine clears the conflict", $$(".pane .tab.dirty").length === 0);
+
+$(".pane .editor").value = SRC_EDITED;
+$(".pane .editor").dispatchEvent(new window.Event("input", { bubbles: true }));
+approvals = posted.filter(m => m.type === "close-approved").length;
 send("confirm-close", {});
 $("#exitSave").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 send("save-result", { path: EXIT_PATH, saved: true, conflict: false });
 check("a successful write closes the window",
       posted.filter(m => m.type === "close-approved").length === approvals + 1);
+
+// Save all is the second door to the same overwrite Ctrl+S had. It posts an unforced
+// save for every dirty buffer, and the host cannot be relied on to refuse one whose
+// file has moved -- so a window closed with "Save all" would write over an external
+// edit and then exit, leaving nothing on screen to notice it by.
+key("e", { ctrlKey: true });
+send("doc-text", { path: EXIT_PATH, text: SRC_CLEAN });
+$(".pane .editor").value = SRC_MINE;
+$(".pane .editor").dispatchEvent(new window.Event("input", { bubbles: true }));
+send("doc-updated", {
+  path: EXIT_PATH, title: "draft.md", folder: "C:" + SEP + "exit",
+  html: '<h1 id="d">Draft changed elsewhere</h1>',
+  outline: [{ level: 1, text: "Draft changed elsewhere", id: "d" }],
+  missing: false, loadedAt: new Date().toISOString()
+});
+
+approvals = posted.filter(m => m.type === "close-approved").length;
+const beforeExitStale = posted.filter(m => m.type === "save-doc").length;
+send("confirm-close", {});
+$("#exitSave").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+const exitStaleSaves = posted.filter(m => m.type === "save-doc").slice(beforeExitStale);
+check("save all sends no unforced save for a stale buffer",
+      exitStaleSaves.every(m => m.payload && m.payload.force === true),
+      JSON.stringify(exitStaleSaves.map(m => m.payload && m.payload.force)));
+check("save all does not close while a buffer is stale",
+      posted.filter(m => m.type === "close-approved").length === approvals);
+check("save all keeps the stale buffer's text", $(".pane .editor")?.value === SRC_MINE);
 
 // Discard: closes immediately and drops the buffer.
 $(".pane .editor").value = SRC_EDITED;

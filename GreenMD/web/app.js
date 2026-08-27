@@ -693,6 +693,20 @@ function saveActive(force) {
   const text = Editor.textOf(pane.id, pane.active);
   if (text === null) return;
 
+  // Do not let an unforced save leave here once the file has moved on disk. The host
+  // decides conflicts by comparing the file against the hash it last read, and a live
+  // reload refreshes that hash -- so after the watcher has seen an external change the
+  // host compares disk against itself, reports no conflict, and the write lands on top
+  // of somebody else's edit. This side still knows the buffer was based on older text,
+  // so the choice goes to the reader instead. "Keep mine" passes force and overwrites
+  // deliberately, which is the only way that should ever happen.
+  if (!force && Editor.isStale(pane.id, pane.active)) {
+    statusTextEl.textContent =
+      "Not saved — the file changed on disk. Use “Keep mine” to overwrite, or “Discard mine”.";
+    for (const showing of Layout.panesShowing(pane.active)) updateNotice(showing);
+    return;
+  }
+
   post("save-doc", { path: pane.active, text, force: !!force });
 }
 
@@ -1578,6 +1592,23 @@ document.getElementById("exitDiscard").addEventListener("click", () => {
 document.getElementById("exitSave").addEventListener("click", () => {
   const dirty = dirtyBuffers();
   if (dirty.length === 0) { approveClose(); return; }
+
+  // Same reasoning as saveActive, and worse here: this writes every dirty buffer and
+  // then closes the window, so an overwrite would take the evidence with it. A buffer
+  // whose file has moved on disk is not written, and the close is abandoned rather than
+  // saving the others and exiting -- the open window is the only place the conflict can
+  // still be resolved.
+  const stale = dirty.filter(d => Editor.isStale(d.paneId, d.path));
+  if (stale.length > 0) {
+    exitPromptEl.hidden = true;
+    statusTextEl.textContent =
+      "Not saved — a file changed on disk while you were editing. Resolve it with "
+      + "“Keep mine” or “Discard mine”, then close again.";
+    for (const { path } of stale) {
+      for (const showing of Layout.panesShowing(path)) updateNotice(showing);
+    }
+    return;
+  }
 
   // Close once every save has come back, so nothing is lost to a failed write.
   pendingExitSaves = new Set(dirty.map(d => d.path));
