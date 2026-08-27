@@ -798,6 +798,13 @@ mark.find-current {
   background: transparent;
 }
 
+/* The UA stylesheet gives <code> its own font-family: monospace, which silently
+   overrides the shared stack above -- so the highlight rendered in the default
+   monospace while the textarea used Cascadia Mono. Two fonts means two sets of
+   wrap points, and at the bottom of a long doc the accumulated difference showed
+   as the caret floating rows below its own glyphs. */
+.editor-highlight code { font: inherit; letter-spacing: inherit; }
+
 .editor {
   overflow: auto;
   resize: none;

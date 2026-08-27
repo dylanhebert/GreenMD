@@ -129,6 +129,13 @@ const editorSharedRule =
 check("both editor layers reserve the same scrollbar gutter",
       /scrollbar-gutter:\s*stable/.test(editorSharedRule),
       editorSharedRule.replace(/\s+/g, " ").slice(0, 200));
+
+// The other way the two layers can disagree: the UA stylesheet hands <code> its own
+// font-family, overriding the shared stack, so the highlight wrapped in a different
+// font than the textarea and the caret drifted rows below its glyphs at the bottom
+// of long documents. jsdom cannot measure it; this asserts the countermanding rule.
+check("the highlight's code element inherits the editor font",
+      /\.editor-highlight code \{[^}]*font:\s*inherit/.test(cssText));
 check("the gutter rule is on the shared selector, not one layer",
       editorSharedRule.includes(".editor-highlight") && editorSharedRule.includes(".editor"));
 
