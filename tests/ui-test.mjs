@@ -1153,6 +1153,61 @@ key("e", { ctrlKey: true });
 check("order survives leaving edit mode",
       childOrder().join(",") === EXPECTED.join(","), childOrder().join(","));
 
+// --- recent files ---
+// Half of this already existed: paths were being recorded and round-tripped through
+// the session, and Ctrl+P falls back to them when no folder is open. Nothing ever
+// displayed them, so the list was invisible unless you happened to have no workspace.
+// Runs last because it opens documents and would disturb the pane assertions above.
+const RECENT_DIR = "C:" + SEP + "recent";
+const RECENT_A = RECENT_DIR + SEP + "alpha.md";
+const RECENT_B = RECENT_DIR + SEP + "beta.md";
+function recentDoc(path, title) {
+  return {
+    path, title, folder: RECENT_DIR,
+    html: '<h1 id="r">' + title + "</h1>",
+    outline: [{ level: 1, text: title, id: "r" }],
+    missing: false, loadedAt: new Date().toISOString()
+  };
+}
+
+send("doc-opened", recentDoc(RECENT_A, "alpha.md"));
+send("doc-opened", recentDoc(RECENT_B, "beta.md"));
+
+const recentItems = () => $$(".menu-recent .menu-item");
+
+check("the File menu has a recent files section", $(".menu-recent") !== null);
+check("recent files are listed", recentItems().length > 0, recentItems().length + " items");
+check("the most recently opened file is first",
+      recentItems()[0]?.dataset.recentPath === RECENT_B,
+      recentItems().map(i => i.dataset.recentPath).join(" | "));
+check("the one before it comes second",
+      recentItems()[1]?.dataset.recentPath === RECENT_A);
+check("a File-menu recent entry shows the file name",
+      (recentItems()[0]?.textContent || "").includes("beta.md"));
+check("a File-menu recent entry shows its folder, to tell duplicates apart",
+      (recentItems()[0]?.textContent || "").includes("recent"),
+      recentItems()[0]?.textContent);
+check("a File-menu recent entry carries the full path as its tooltip",
+      recentItems()[0]?.getAttribute("title") === RECENT_B);
+
+// Re-opening moves an entry to the top rather than adding a second copy.
+send("doc-opened", recentDoc(RECENT_A, "alpha.md"));
+check("re-opening does not duplicate an entry",
+      recentItems().filter(i => i.dataset.recentPath === RECENT_A).length === 1,
+      recentItems().map(i => i.dataset.recentPath).join(" | "));
+check("re-opening moves the entry back to the top",
+      recentItems()[0]?.dataset.recentPath === RECENT_A);
+
+check("the menu does not grow without bound", recentItems().length <= 10,
+      recentItems().length + " items");
+
+const beforeRecentOpen = posted.filter(m => m.type === "open-file").length;
+recentItems()[1]?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("clicking a recent entry asks the host to open it",
+      posted.filter(m => m.type === "open-file").length === beforeRecentOpen + 1
+      && posted.filter(m => m.type === "open-file").pop()?.payload === RECENT_B,
+      JSON.stringify(posted.filter(m => m.type === "open-file").pop()?.payload));
+
 // --- report ---
 console.log("");
 for (const r of results) {

@@ -34,6 +34,10 @@ const RECENT_LIMIT = 25;
 
 function noteRecent(path) {
   recents = [path, ...recents.filter(p => p !== path)].slice(0, RECENT_LIMIT);
+
+  // The File menu lists these, so it has to be rebuilt whenever the order moves.
+  // Guarded because a document can be recorded before the menu bar is configured.
+  if (window.Menu) Menu.refresh();
 }
 
 function post(type, payload) {
@@ -1454,7 +1458,11 @@ Panels.configure({
 Menu.configure(Commands, {
   onUnavailable(command) {
     statusTextEl.textContent = command.reason || (command.label + " is not available right now.");
-  }
+  },
+  // The whole stored list, not the ten the menu shows -- the menu decides its own depth,
+  // and Ctrl+P uses the same list and wants all of it.
+  recentFiles: () => recents,
+  onOpenRecent(path) { post("open-file", path); }
 });
 
 Layout.mount(panesEl);

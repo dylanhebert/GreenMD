@@ -23,6 +23,8 @@ window.Menu = (() => {
         { command: "openFile" },
         { command: "addFolder" },
         { separator: true },
+        { recent: true },
+        { separator: true },
         { command: "save" },
         { separator: true },
         { command: "closeTab" },
@@ -127,6 +129,17 @@ window.Menu = (() => {
           continue;
         }
 
+        // Recent files are data, not commands, so they cannot come out of the registry
+        // like everything else here. This leaves a container that renderRecent fills
+        // and refills -- the list changes every time a document is opened, and
+        // rebuilding just this part leaves the rest of the bar untouched.
+        if (entry.recent) {
+          const holder = document.createElement("div");
+          holder.className = "menu-recent";
+          list.append(holder);
+          continue;
+        }
+
         const command = commands.get(entry.command);
         if (!command) continue;
 
@@ -161,6 +174,85 @@ window.Menu = (() => {
       root.append(button, list);
       barEl.append(root);
     });
+
+    renderRecent();
+  }
+
+  // Written with String.fromCharCode rather than an escape: backslashes in these files
+  // have been mangled by tooling before, and a silently broken path split would show up
+  // as full paths in the menu rather than as an error.
+  const BACKSLASH = String.fromCharCode(92);
+  const RECENT_SHOWN = 10;
+
+  function lastCut(path) {
+    return Math.max(path.lastIndexOf("/"), path.lastIndexOf(BACKSLASH));
+  }
+
+  function fileNameOf(path) {
+    const cut = lastCut(path);
+    return cut >= 0 ? path.slice(cut + 1) : path;
+  }
+
+  function folderNameOf(path) {
+    const cut = lastCut(path);
+    if (cut < 0) return "";
+
+    const parent = path.slice(0, cut);
+    const up = lastCut(parent);
+    return up >= 0 ? parent.slice(up + 1) : parent;
+  }
+
+  /**
+   * Fills the recent-files section. The stored list is longer than this shows, because
+   * Ctrl+P uses the same list as its fallback and wants the depth; a dropdown does not.
+   */
+  function renderRecent() {
+    if (!barEl) return;
+
+    const paths = (hooks.recentFiles ? hooks.recentFiles() : null) || [];
+
+    for (const holder of barEl.querySelectorAll(".menu-recent")) {
+      holder.replaceChildren();
+
+      if (paths.length === 0) {
+        // A greyed row rather than an empty gap between two separators, which reads as
+        // a rendering fault rather than as a feature waiting for its first document.
+        const empty = document.createElement("div");
+        empty.className = "menu-item unavailable";
+        empty.setAttribute("aria-disabled", "true");
+
+        const label = document.createElement("span");
+        label.textContent = "No recent files";
+        empty.append(label);
+        holder.append(empty);
+        continue;
+      }
+
+      for (const path of paths.slice(0, RECENT_SHOWN)) {
+        const item = document.createElement("button");
+        item.className = "menu-item";
+        item.type = "button";
+        item.dataset.recentPath = path;
+        item.title = path;
+
+        const label = document.createElement("span");
+        label.textContent = fileNameOf(path);
+
+        // Reuses the shortcut column, already dim and right-aligned. Without it two
+        // files both called README.md are indistinguishable.
+        const where = document.createElement("span");
+        where.className = "menu-keys";
+        where.textContent = folderNameOf(path);
+
+        item.append(label, where);
+        item.addEventListener("click", () => {
+          close();
+          if (hooks.onOpenRecent) hooks.onOpenRecent(path);
+        });
+
+        holder.append(item);
+      }
+    }
   }
 
   const CLOSE_GRACE_MS = 260;
@@ -216,7 +308,11 @@ window.Menu = (() => {
   function refresh() {
     if (!barEl || !commands) return;
 
-    for (const item of barEl.querySelectorAll(".menu-item")) {
+    // Scoped to items that came from the registry. Recent-file rows are .menu-item too,
+    // and sweeping them into this loop clears the tooltip holding their full path and
+    // strips the greyed class off the empty-list row -- they have no data-command, so
+    // every lookup here would miss and then overwrite.
+    for (const item of barEl.querySelectorAll(".menu-item[data-command]")) {
       const command = commands.get(item.dataset.command);
       const unavailable = isUnavailable(command);
 
@@ -224,6 +320,8 @@ window.Menu = (() => {
       item.setAttribute("aria-disabled", String(unavailable));
       item.title = unavailable && command.reason ? command.reason : "";
     }
+
+    renderRecent();
   }
 
   return { configure, refresh, close, menus: MENUS, closeGraceMs: CLOSE_GRACE_MS };
