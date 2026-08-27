@@ -177,8 +177,16 @@ window.Layout = (() => {
     if (node.type === "pane") {
       // Zoom rides along with the pane rather than being keyed by pane id: ids are
       // regenerated on restore, so an external map would not line up again.
-      return { type: "pane", tabs: [...node.tabs], active: node.active,
-               modes: { ...node.modes }, zoom: node.zoom ?? 1 };
+      return {
+        type: "pane",
+        tabs: [...node.tabs],
+        active: node.active,
+        modes: { ...node.modes },
+        // Reading position per tab, so a restored session lands where it was left
+        // rather than at the top of a long document.
+        anchors: { ...node.anchors },
+        zoom: node.zoom ?? 1
+      };
     }
     return {
       type: "split",
@@ -193,6 +201,7 @@ window.Layout = (() => {
       const restored = newPane(data?.tabs ?? [], data?.active ?? null);
       restored.zoom = typeof data?.zoom === "number" ? data.zoom : 1;
       restored.modes = data?.modes && typeof data.modes === "object" ? { ...data.modes } : {};
+      restored.anchors = data?.anchors && typeof data.anchors === "object" ? { ...data.anchors } : {};
       return restored;
     }
     const node = {

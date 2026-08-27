@@ -70,6 +70,12 @@ window.Menu = (() => {
         { command: "goToFile" },
         { command: "find" }
       ]
+    },
+    {
+      label: "Help",
+      items: [
+        { command: "about" }
+      ]
     }
   ];
 

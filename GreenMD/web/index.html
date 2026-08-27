@@ -63,6 +63,36 @@
     </div>
   </div>
 
+  <div id="aboutBox" class="quick" hidden>
+    <div class="quick-box about-box" role="dialog" aria-labelledby="aboutName">
+      <div class="about-head">
+        <div class="about-mark" aria-hidden="true">MD</div>
+        <div>
+          <div id="aboutName" class="about-name">GreenMD</div>
+          <div id="aboutTag" class="about-tag">A dark-mode markdown viewer for Windows</div>
+        </div>
+      </div>
+      <dl id="aboutFacts" class="about-facts"></dl>
+      <div id="aboutDeps" class="about-deps"></div>
+      <div class="exit-actions">
+        <button id="aboutCopy" class="exit-button" type="button">Copy details</button>
+        <button id="aboutClose" class="exit-button primary" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="exitPrompt" class="quick" hidden>
+    <div class="quick-box exit-box" role="alertdialog" aria-labelledby="exitTitle">
+      <div id="exitTitle" class="exit-title">Unsaved changes</div>
+      <div id="exitList" class="exit-list"></div>
+      <div class="exit-actions">
+        <button id="exitSave" class="exit-button primary" type="button">Save all and close</button>
+        <button id="exitDiscard" class="exit-button danger" type="button">Discard and close</button>
+        <button id="exitCancel" class="exit-button" type="button">Keep editing</button>
+      </div>
+    </div>
+  </div>
+
   <div id="quickOpen" class="quick" hidden>
     <div class="quick-box">
       <input id="quickInput" class="quick-input" type="text" spellcheck="false"

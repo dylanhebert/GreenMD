@@ -338,13 +338,24 @@ function renderPane(pane, element) {
 
   // rAF-throttled: scroll fires far more often than the outline needs updating.
   let scheduled = false;
+  let settle = null;
+
   scroller.addEventListener("scroll", () => {
-    if (scheduled) return;
-    scheduled = true;
-    requestAnimationFrame(() => {
-      scheduled = false;
-      if (Layout.activeId === pane.id) syncOutlineHighlight();
-    });
+    if (!scheduled) {
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        if (Layout.activeId === pane.id) syncOutlineHighlight();
+      });
+    }
+
+    // Reading position is only worth writing once scrolling has stopped.
+    clearTimeout(settle);
+    settle = setTimeout(() => {
+      if (!pane.active) return;
+      pane.anchors[pane.active] = captureAnchor(scroller);
+      saveSession();
+    }, 500);
   }, { passive: true });
 
   // A textarea cannot style its own text, so a highlighted layer sits behind a
@@ -919,6 +930,8 @@ host.addEventListener("message", (event) => {
       break;
 
     case "save-result":
+      noteExitSave(payload.path, payload.saved);
+
       if (payload.saved) {
         Editor.markSaved(payload.path);
         refreshDirtyMarks();
@@ -941,6 +954,10 @@ host.addEventListener("message", (event) => {
       } else {
         statusTextEl.textContent = "Could not save " + payload.path.split(/[\/]/).pop();
       }
+      break;
+
+    case "about":
+      showAbout(payload);
       break;
 
     case "association":
@@ -1058,6 +1075,8 @@ window.Commands = (() => {
     () => Workspace.hasWorkspace(),
     "No folders are open. Add one with Ctrl+K.");
 
+  define("about", "About GreenMD", "", () => post("get-about"));
+
   define("registerAssociation", "Set as default .md viewer", "",
     () => post("register-association"),
     () => !associationRegistered,
@@ -1141,6 +1160,12 @@ document.addEventListener("keydown", (event) => {
   // The overlay handles its own keys; Escape closes it from anywhere.
   if (Workspace.isQuickOpen()) {
     if (event.key === "Escape") Workspace.closeQuick();
+    return;
+  }
+
+  if (event.key === "Escape" && !aboutBoxEl.hidden) {
+    event.preventDefault();
+    aboutBoxEl.hidden = true;
     return;
   }
 
@@ -1293,6 +1318,160 @@ Layout.mount(panesEl);
 Zoom.applyAll();
 renderAll({ keepAnchors: false });
 post("ready");
+
+// ---------- about ----------
+
+const aboutBoxEl = document.getElementById("aboutBox");
+
+function showAbout(info) {
+  const facts = document.getElementById("aboutFacts");
+  facts.replaceChildren();
+
+  const row = (label, value, isPath) => {
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    if (isPath) dd.className = "path";
+    facts.append(dt, dd);
+  };
+
+  row("Version", info.version + (info.build ? "  (" + info.build + ")" : ""));
+  row("Runtime", ".NET " + info.dotnet + (info.selfContained ? " (bundled)" : " (installed separately)"));
+  row("WebView2", info.webView2);
+  row("Markdown files", info.associationRegistered
+    ? "GreenMD is registered as a handler"
+    : "not registered — File > Set as default .md viewer");
+  row("Installed at", info.executable, true);
+  row("Session", info.sessionFile, true);
+  row("Browser data", info.webViewData, true);
+
+  const deps = document.getElementById("aboutDeps");
+  deps.replaceChildren();
+  deps.append(
+    Object.assign(document.createElement("div"), {
+      textContent: "Two dependencies, neither with any of its own: Markdig (BSD-2-Clause) turns markdown into HTML, and Microsoft's WebView2 draws it."
+    }),
+    Object.assign(document.createElement("div"), {
+      textContent: "No third-party JavaScript. The highlighter, layout, editor and file search are written for this project. Nothing is sent anywhere — the app makes no network requests."
+    })
+  );
+
+  aboutBoxEl.dataset.details = [
+    "GreenMD " + info.version + (info.build ? " (" + info.build + ")" : ""),
+    ".NET " + info.dotnet,
+    "WebView2 " + info.webView2,
+    info.executable
+  ].join(String.fromCharCode(10));
+
+  aboutBoxEl.hidden = false;
+  document.getElementById("aboutClose").focus();
+}
+
+document.getElementById("aboutClose").addEventListener("click", () => { aboutBoxEl.hidden = true; });
+aboutBoxEl.addEventListener("mousedown", event => { if (event.target === aboutBoxEl) aboutBoxEl.hidden = true; });
+
+document.getElementById("aboutCopy").addEventListener("click", async () => {
+  const button = document.getElementById("aboutCopy");
+  try {
+    await navigator.clipboard.writeText(aboutBoxEl.dataset.details || "");
+    button.textContent = "Copied";
+  } catch {
+    button.textContent = "Failed";
+  }
+  setTimeout(() => { button.textContent = "Copy details"; }, 1200);
+});
+
+// ---------- closing with unsaved work ----------
+
+const exitPromptEl = document.getElementById("exitPrompt");
+const exitListEl = document.getElementById("exitList");
+
+/** Every dirty buffer, as { paneId, path }. */
+function dirtyBuffers() {
+  const dirty = [];
+  for (const pane of Layout.panes()) {
+    for (const path of pane.tabs) {
+      if (Editor.isDirty(pane.id, path)) dirty.push({ paneId: pane.id, path });
+    }
+  }
+  return dirty;
+}
+
+function approveClose() {
+  exitPromptEl.hidden = true;
+  post("close-approved");
+}
+
+function showExitPrompt(dirty) {
+  exitListEl.replaceChildren();
+
+  const intro = document.createElement("div");
+  intro.textContent = dirty.length === 1
+    ? "One document has changes that have not been written to disk:"
+    : `${dirty.length} documents have changes that have not been written to disk:`;
+  exitListEl.append(intro);
+
+  // Deduplicated: the same file open in two panes is still one file on disk.
+  for (const path of [...new Set(dirty.map(d => d.path))]) {
+    const row = document.createElement("div");
+    row.className = "exit-file";
+    row.textContent = path;
+    exitListEl.append(row);
+  }
+
+  exitPromptEl.hidden = false;
+  document.getElementById("exitCancel").focus();
+}
+
+host.addEventListener("message", (event) => {
+  if (event.data.type !== "confirm-close") return;
+
+  const dirty = dirtyBuffers();
+  if (dirty.length === 0) { approveClose(); return; }
+
+  showExitPrompt(dirty);
+});
+
+document.getElementById("exitCancel").addEventListener("click", () => {
+  exitPromptEl.hidden = true;
+  statusTextEl.textContent = "Close cancelled — save with Ctrl+S, or close again and discard.";
+});
+
+document.getElementById("exitDiscard").addEventListener("click", () => {
+  for (const { paneId, path } of dirtyBuffers()) Editor.forget(paneId, path);
+  approveClose();
+});
+
+document.getElementById("exitSave").addEventListener("click", () => {
+  const dirty = dirtyBuffers();
+  if (dirty.length === 0) { approveClose(); return; }
+
+  // Close once every save has come back, so nothing is lost to a failed write.
+  pendingExitSaves = new Set(dirty.map(d => d.path));
+  for (const { paneId, path } of dirty) {
+    post("save-doc", { path, text: Editor.textOf(paneId, path), force: false });
+  }
+});
+
+/** Paths still being written before the window may close. Null when not exiting. */
+let pendingExitSaves = null;
+
+/** Called from the save-result handler once each write lands. */
+function noteExitSave(path, saved) {
+  if (!pendingExitSaves) return;
+
+  if (!saved) {
+    // A failed or conflicting write must abandon the close, not lose the text.
+    pendingExitSaves = null;
+    exitPromptEl.hidden = true;
+    statusTextEl.textContent = "Could not save " + path.split(/[\/]/).pop() + " — close cancelled.";
+    return;
+  }
+
+  pendingExitSaves.delete(path);
+  if (pendingExitSaves.size === 0) { pendingExitSaves = null; approveClose(); }
+}
 
 // ---------- layout diagnostic ----------
 //

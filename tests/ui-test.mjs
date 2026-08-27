@@ -863,6 +863,111 @@ const OPEN_C = "C:" + SEP + "reopen" + SEP + "gamma.md";
 send("doc-opened", reopenDoc(OPEN_C, "Gamma"));
 check("a new file still opens as a new tab", tabCount() === 3, `${tabCount()}`);
 
+// --- closing the window with unsaved work ---
+// Closing a tab already prompts; closing the window used to discard silently.
+//
+// Back to a single pane first: an earlier block leaves a split open, and
+// $(".pane .editor") would then be the first pane's editor rather than the active
+// one, so the typing would land in a different document.
+window.eval("Layout.reset(); Layout.render();");
+
+const EXIT_PATH = "C:" + SEP + "exit" + SEP + "draft.md";
+send("doc-opened", {
+  path: EXIT_PATH, title: "draft.md", folder: "C:" + SEP + "exit",
+  html: '<h1 id="d">Draft</h1>', outline: [{ level: 1, text: "Draft", id: "d" }],
+  missing: false, loadedAt: new Date().toISOString()
+});
+
+// Nothing dirty: the close goes straight through.
+let approvals = posted.filter(m => m.type === "close-approved").length;
+send("confirm-close", {});
+check("a clean close is approved immediately",
+      posted.filter(m => m.type === "close-approved").length === approvals + 1);
+check("no prompt shown when nothing is dirty", $("#exitPrompt").hidden === true);
+
+// Now make it dirty and try again.
+key("e", { ctrlKey: true });
+send("doc-text", { path: EXIT_PATH, text: SRC_CLEAN });
+$(".pane .editor").value = SRC_MINE;
+$(".pane .editor").dispatchEvent(new window.Event("input", { bubbles: true }));
+
+approvals = posted.filter(m => m.type === "close-approved").length;
+send("confirm-close", {});
+check("a dirty close is not approved",
+      posted.filter(m => m.type === "close-approved").length === approvals);
+check("the unsaved prompt is shown", $("#exitPrompt").hidden === false);
+check("the prompt names the file",
+      ($("#exitList").textContent || "").includes("draft.md"), $("#exitList").textContent);
+
+// Keep editing: no close, text intact.
+$("#exitCancel").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("keep editing cancels the close",
+      posted.filter(m => m.type === "close-approved").length === approvals);
+check("keep editing keeps the text", $(".pane .editor")?.value === SRC_MINE);
+
+// Save all: closes only once the write comes back.
+send("confirm-close", {});
+$("#exitSave").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("save all writes the document",
+      posted.filter(m => m.type === "save-doc").pop()?.payload?.path === EXIT_PATH);
+check("it does not close before the write lands",
+      posted.filter(m => m.type === "close-approved").length === approvals);
+
+send("save-result", { path: EXIT_PATH, saved: false, conflict: true });
+check("a failed write abandons the close rather than losing the text",
+      posted.filter(m => m.type === "close-approved").length === approvals);
+check("the text survives a failed exit save", $(".pane .editor")?.value === SRC_MINE);
+
+send("confirm-close", {});
+$("#exitSave").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+send("save-result", { path: EXIT_PATH, saved: true, conflict: false });
+check("a successful write closes the window",
+      posted.filter(m => m.type === "close-approved").length === approvals + 1);
+
+// Discard: closes immediately and drops the buffer.
+$(".pane .editor").value = SRC_EDITED;
+$(".pane .editor").dispatchEvent(new window.Event("input", { bubbles: true }));
+approvals = posted.filter(m => m.type === "close-approved").length;
+send("confirm-close", {});
+$("#exitDiscard").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("discard closes the window",
+      posted.filter(m => m.type === "close-approved").length === approvals + 1);
+
+// --- scroll position is remembered across a restart ---
+const savedLayout = window.eval("JSON.stringify(Layout.serialize())");
+check("serialised layout carries scroll anchors", savedLayout.includes("anchors"),
+      savedLayout.slice(0, 160));
+
+// --- about ---
+check("about is in the Help menu",
+      !!$(".menu-item[data-command='about']"),
+      $$(".menu-title").map(t => t.textContent).join(", "));
+
+const beforeAbout = posted.filter(m => m.type === "get-about").length;
+window.eval("Commands.run('about')");
+check("about asks the host for build details",
+      posted.filter(m => m.type === "get-about").length === beforeAbout + 1);
+check("about stays hidden until the host answers", $("#aboutBox").hidden === true);
+
+send("about", {
+  version: "0.1.0", build: "abc1234", dotnet: "10.0.0", webView2: "131.0.0.0",
+  selfContained: false,
+  executable: "C:" + SEP + "app" + SEP + "GreenMD.exe",
+  sessionFile: "C:" + SEP + "data" + SEP + "session.json",
+  webViewData: "C:" + SEP + "data" + SEP + "WebView2",
+  associationRegistered: true
+});
+
+check("about opens once answered", $("#aboutBox").hidden === false);
+const aboutText = $("#aboutBox").textContent || "";
+for (const expected of ["0.1.0", "abc1234", "10.0.0", "131.0.0.0", "session.json", "Markdig"]) {
+  check("about shows " + expected, aboutText.includes(expected));
+}
+check("about reports the association state", aboutText.includes("registered"));
+
+key("Escape");
+check("Escape closes about", $("#aboutBox").hidden === true);
+
 // --- pane child order ---
 // DOM order needs no layout, so unlike the geometry bugs this IS testable here.
 // It broke because refreshPaneChrome appended rebuilt chrome and then moved the

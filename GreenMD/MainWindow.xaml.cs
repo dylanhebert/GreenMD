@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
@@ -23,6 +24,9 @@ public partial class MainWindow : Window
     private readonly string? _dumpStatePath;
     private bool _uiReady;
 
+    /// <summary>Set once the UI has confirmed there is no unsaved work to lose.</summary>
+    private bool _closeConfirmed;
+
     public MainWindow(string? initialPath, string? dumpLayoutPath, string? dumpStatePath)
     {
         _initialPath = initialPath;
@@ -41,6 +45,8 @@ public partial class MainWindow : Window
         Drop += OnDrop;
         DragOver += OnDragOver;
 
+        Closing += OnClosing;
+
         Closed += (_, _) =>
         {
             _session.Flush();
@@ -51,6 +57,20 @@ public partial class MainWindow : Window
         _watcher.Changed += OnFileChanged;
         _workspace.TreeChanged += OnWorkspaceTreeChanged;
         Loaded += OnLoadedAsync;
+    }
+
+    /// <summary>
+    /// Closing the window must not silently discard unsaved edits, which closing a
+    /// tab already guards against. The check lives in the UI -- only it knows which
+    /// buffers are dirty -- so the first close is cancelled while it is asked, and
+    /// the UI closes the window for real once it is satisfied.
+    /// </summary>
+    private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (_closeConfirmed || !_uiReady) return;
+
+        e.Cancel = true;
+        Post("confirm-close", new { });
     }
 
     // ---------- WebView2 setup ----------
@@ -168,6 +188,15 @@ public partial class MainWindow : Window
 
             case "state-dump":
                 WriteStateDump(payload);
+                break;
+
+            case "get-about":
+                PostAbout();
+                break;
+
+            case "close-approved":
+                _closeConfirmed = true;
+                Close();
                 break;
 
             case "set-title":
@@ -569,6 +598,46 @@ public partial class MainWindow : Window
     {
         var rendered = MarkdownRenderer.Render(WelcomeMarkdown);
         return new { html = rendered.Html, outline = rendered.Outline };
+    }
+
+    /// <summary>
+    /// Facts about this build and where it keeps things. Gathered here because the
+    /// UI has no way to see any of it.
+    /// </summary>
+    private void PostAbout()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+
+        var version = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString()
+            ?? "unknown";
+
+        // A build produced from a git checkout carries a +sha suffix; drop it here and
+        // show it separately rather than in the headline version.
+        var plus = version.IndexOf('+');
+        var build = plus >= 0 ? version[(plus + 1)..] : string.Empty;
+        if (plus >= 0) version = version[..plus];
+
+        string webView2;
+        try { webView2 = CoreWebView2Environment.GetAvailableBrowserVersionString(); }
+        catch (WebView2RuntimeNotFoundException) { webView2 = "not found"; }
+
+        Post("about", new
+        {
+            version,
+            build,
+            dotnet = Environment.Version.ToString(),
+            webView2,
+            selfContained = !string.IsNullOrEmpty(Environment.ProcessPath)
+                            && !File.Exists(Path.Combine(AppContext.BaseDirectory, "GreenMD.runtimeconfig.json")),
+            executable = FileAssociation.ExecutablePath,
+            sessionFile = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GreenMD", "session.json"),
+            webViewData = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GreenMD", "WebView2"),
+            associationRegistered = FileAssociation.IsRegistered()
+        });
     }
 
     private void PostAssociationState() => Post("association", new

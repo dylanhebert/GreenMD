@@ -943,3 +943,91 @@ mark.find-current {
 }
 .body-divider:hover { background: var(--border-strong); }
 .body-divider[hidden] { display: none; }
+
+
+/* ---------- unsaved-on-exit prompt ---------- */
+
+.exit-box { width: min(520px, 80vw); padding: 18px 20px 16px; }
+
+.exit-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+
+.exit-list {
+  max-height: 30vh;
+  overflow-y: auto;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.exit-list div { padding: 2px 0; }
+.exit-list .exit-file { color: var(--live); }
+
+.exit-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+
+.exit-button {
+  padding: 5px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.exit-button:hover { background: #24312c; }
+.exit-button.primary { color: var(--live); border-color: #2a4d43; }
+.exit-button.danger:hover { background: #3a2323; border-color: #7a4a4a; }
+
+
+/* ---------- about ---------- */
+
+.about-box { width: min(560px, 84vw); padding: 20px 22px 16px; }
+
+.about-head { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+
+.about-mark {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: #0b1a15;
+  background: var(--live);
+  border-radius: 10px;
+}
+
+.about-name { font-size: 17px; font-weight: 600; color: var(--text); }
+.about-tag { font-size: 12px; color: var(--text-muted); }
+
+.about-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 16px;
+  margin: 0 0 14px;
+  font-size: 12px;
+}
+.about-facts dt { color: var(--text-muted); white-space: nowrap; }
+.about-facts dd {
+  margin: 0;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.about-facts dd.path { font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; }
+
+.about-deps {
+  margin-bottom: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+.about-deps strong { color: var(--text-dim); font-weight: 600; }
