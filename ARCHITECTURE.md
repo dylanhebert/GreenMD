@@ -291,8 +291,13 @@ moved or republished build correctly reports as unregistered rather than silentl
 pointing at a path that no longer exists.
 
 `GreenMD.exe --register` and `--unregister` do the same thing without a window,
-for scripted setup. In the app, the offer appears in the status bar and disappears once
+for scripted setup. In the app it lives in the File menu, greyed out with a reason once
 it is done.
+
+It used to be offered by a button in the status bar as well. Two controls for one
+one-time action, and the status bar is meant for transient state — a permanent offer
+parked in it reads as something being wrong. The menu entry already existed; the button
+was the duplicate, so the button went.
 
 ### Find
 

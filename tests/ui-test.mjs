@@ -204,11 +204,27 @@ window.eval(`
 `);
 check("emptied pane collapsed", $$(".pane").length === 1, `${$$(".pane").length} panes remain`);
 
-// --- association button ---
+// --- file association ---
+// Offered in the File menu and nowhere else. There was a second button in the status
+// bar saying exactly the same thing, which is two controls for one one-time action --
+// and the status bar is for transient state, not for a permanent offer sitting there
+// until you happen to act on it.
+const assocItem = () => $(".menu-item[data-command='registerAssociation']");
+
+check("the association offer is in the File menu", !!assocItem());
+
 send("association", { registered: false, exe: "C:\\app\\GreenMD.exe" });
-check("association offer shown when unregistered", $("#assocButton").hidden === false);
+check("association offer is available when unregistered",
+      assocItem()?.classList.contains("unavailable") === false);
+
 send("association", { registered: true, exe: "C:\\app\\GreenMD.exe" });
-check("association offer hidden once registered", $("#assocButton").hidden === true);
+check("association offer greys out once registered",
+      assocItem()?.classList.contains("unavailable") === true);
+check("the greyed offer says why",
+      (assocItem()?.getAttribute("title") || "").includes("already registered"),
+      assocItem()?.getAttribute("title"));
+
+check("no duplicate association control in the status bar", $("#assocButton") === null);
 
 // --- workspace tree ---
 // Build paths from a char code so no backslash escaping survives to confuse the data.

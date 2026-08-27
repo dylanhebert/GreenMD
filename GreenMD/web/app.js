@@ -6,7 +6,6 @@ const panesEl = document.getElementById("panes");
 const pulseEl = document.getElementById("pulse");
 const statusTextEl = document.getElementById("statusText");
 const statusRightEl = document.getElementById("statusRight");
-const assocButtonEl = document.getElementById("assocButton");
 const outlineEl = document.getElementById("outline");
 const outlineTitleEl = document.getElementById("outlineTitle");
 const openFolderEl = document.getElementById("openFolder");
@@ -1109,9 +1108,9 @@ host.addEventListener("message", (event) => {
 
     case "association":
       associationRegistered = !!payload.registered;
-      assocButtonEl.hidden = payload.registered;
+      // The File menu is the only place this is offered, and refresh is what greys the
+      // entry once it is done.
       Menu.refresh();
-      assocButtonEl.title = payload.exe;
       break;
 
     case "downloading":
@@ -1225,7 +1224,13 @@ window.Commands = (() => {
   define("about", "About GreenMD", "", () => post("get-about"));
 
   define("registerAssociation", "Set as default .md viewer", "",
-    () => post("register-association"),
+    () => {
+      post("register-association");
+      // Said here rather than on a button's click handler, so running it from the menu
+      // reports back too -- the menu path used to do it silently.
+      statusTextEl.textContent =
+        "Registered. Windows will ask you to confirm the default the next time you open a .md file.";
+    },
     () => !associationRegistered,
     "GreenMD is already registered as a markdown handler.");
 
@@ -1397,12 +1402,6 @@ toggleOutlineEl.addEventListener("click", () => Commands.run("toggleOutline"));
 document.getElementById("swapPanels").addEventListener("click", () => Commands.run("swapPanels"));
 
 openFolderEl.addEventListener("click", () => Commands.run("addFolder"));
-
-assocButtonEl.addEventListener("click", () => {
-  Commands.run("registerAssociation");
-  statusTextEl.textContent =
-    "Registered. Windows will ask you to confirm the default the next time you open a .md file.";
-});
 
 // ---------- boot ----------
 
