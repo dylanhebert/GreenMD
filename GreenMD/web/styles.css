@@ -765,7 +765,10 @@ mark.find-current {
   position: absolute;
   inset: 0;
   margin: 0;
-  padding: 20px 26px;
+  /* The 40vh at the bottom mirrors the rendered view: notes typed at the end of a
+     file should not sit against the status bar. On both layers, or their heights
+     disagree and the caret drifts. */
+  padding: 20px 26px 40vh;
   font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
   font-size: inherit;
   line-height: 1.65;
@@ -812,6 +815,9 @@ mark.find-current {
   background: transparent;
   color: transparent;              /* the layer behind supplies the visible glyphs */
   caret-color: var(--text);
+  /* Keeps the caret itself off the bottom edge while typing: a caret reveal in the
+     bottom band scrolls a little further, so new lines appear with room below. */
+  scroll-padding-bottom: 15vh;
 }
 .editor::selection { background: #3a4d46; }
 

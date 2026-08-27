@@ -136,6 +136,12 @@ check("both editor layers reserve the same scrollbar gutter",
 // of long documents. jsdom cannot measure it; this asserts the countermanding rule.
 check("the highlight's code element inherits the editor font",
       /\.editor-highlight code \{[^}]*font:\s*inherit/.test(cssText));
+
+// The bottom buffer must be in the shared rule: on one layer only, the two heights
+// disagree and the caret drifts at the bottom of the document.
+check("both editor layers share the bottom breathing room",
+      /padding:\s*20px 26px 40vh/.test(editorSharedRule),
+      editorSharedRule.replace(/\s+/g, " ").slice(0, 200));
 check("the gutter rule is on the shared selector, not one layer",
       editorSharedRule.includes(".editor-highlight") && editorSharedRule.includes(".editor"));
 
