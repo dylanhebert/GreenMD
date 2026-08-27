@@ -965,6 +965,31 @@ for (const expected of ["0.1.0", "abc1234", "10.0.0", "131.0.0.0", "session.json
 }
 check("about reports the association state", aboutText.includes("registered"));
 
+// The box went on claiming "No third-party JavaScript" for as long as mermaid had been
+// vendored, which is the sort of stale boast a reader would reasonably rely on.
+// vendor/README.md is the one source of truth for the version, so these read the
+// expected value from there rather than repeating it -- bumping mermaid without
+// updating the credit fails here rather than quietly shipping a wrong number.
+const vendoredMermaid = readFileSync(join(WEB, "vendor", "README.md"), "utf8")
+  .match(/^\|\s*Version\s*\|\s*([^|\s]+)\s*\|/m)?.[1];
+
+check("vendor README records a mermaid version", !!vendoredMermaid, String(vendoredMermaid));
+check("about credits mermaid", /mermaid/i.test(aboutText), aboutText);
+check("about shows the vendored mermaid version",
+      !!vendoredMermaid && aboutText.includes(vendoredMermaid), String(vendoredMermaid));
+// Deliberately not a bare /MIT/ test: GreenMD is itself MIT and says so a few rows up,
+// which would satisfy a loose match even if mermaid's credit were deleted outright.
+check("about names the mermaid licence beside mermaid itself",
+      /Mermaid\s+[\d.]+\s*\(MIT\)/.test(aboutText), aboutText);
+check("about states GreenMD's own licence", /Licence/.test(aboutText));
+check("about no longer claims zero third-party JavaScript",
+      !/no third-party javascript/i.test(aboutText), aboutText);
+check("about explains that mermaid is loaded on demand",
+      /on demand|only when|first use/i.test(aboutText), aboutText);
+check("copy details carry the mermaid version, for bug reports",
+      !!vendoredMermaid && ($("#aboutBox").dataset.details || "").includes(vendoredMermaid),
+      $("#aboutBox").dataset.details || "");
+
 key("Escape");
 check("Escape closes about", $("#aboutBox").hidden === true);
 

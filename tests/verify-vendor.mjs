@@ -46,10 +46,30 @@ for (const section of sections) {
   }
 }
 
+/*
+ * The About box credits mermaid by version and cannot read it off window.mermaid,
+ * because mermaid is not loaded until a document actually contains a diagram. So app.js
+ * carries a copy of the version -- and a copy nothing checks is a copy that goes stale.
+ * This is that check. Bump the vendored file and the two disagree here, in CI, rather
+ * than shipping a confidently wrong number in a dialog people read to file bug reports.
+ */
+const declared = readFileSync(join(VENDOR, "..", "app.js"), "utf8")
+  .match(/MERMAID_VERSION\s*=\s*"([^"]+)"/)?.[1];
+const recorded = readme.match(/^\|\s*Version\s*\|\s*([^|\s]+)\s*\|/m)?.[1];
+
+if (!declared) {
+  failures.push("web/app.js: no MERMAID_VERSION constant found");
+} else if (!recorded) {
+  failures.push("vendor/README.md: no Version row recorded");
+} else if (declared !== recorded) {
+  failures.push(
+    `mermaid version drift\n    vendor/README.md records ${recorded}\n    web/app.js declares  ${declared}`);
+}
+
 if (failures.length) {
   console.log("VENDOR VERIFICATION FAILED:");
   for (const failure of failures) console.log("  " + failure);
   process.exit(1);
 }
 
-console.log(`vendor: ${checked} file(s) match the recorded hashes`);
+console.log(`vendor: ${checked} file(s) match the recorded hashes, mermaid ${recorded} credited consistently`);

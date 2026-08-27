@@ -183,6 +183,13 @@ function addCopyButtons(root) {
 // no diagrams in them. Vendored and served from the app's own origin, so it runs
 // under script-src 'self' and reaches no network.
 
+// The About box credits this, so it cannot be read off window.mermaid -- that object
+// does not exist until a document with a diagram forces the load. vendor/README.md
+// holds the authoritative version and tests/verify-vendor.mjs fails if the two drift,
+// so this copy cannot go stale unnoticed.
+const MERMAID_VERSION = "11.4.1";
+const MERMAID_LICENCE = "MIT";
+
 let mermaidLoading = null;
 
 function ensureMermaid() {
@@ -1461,6 +1468,8 @@ function showAbout(info) {
   row("Version", info.version + (info.build ? "  (" + info.build + ")" : ""));
   row("Runtime", ".NET " + info.dotnet + (info.selfContained ? " (bundled)" : " (installed separately)"));
   row("WebView2", info.webView2);
+  row("Diagrams", "Mermaid " + MERMAID_VERSION + " (" + MERMAID_LICENCE + "), loaded on demand");
+  row("Licence", "MIT");
   row("Markdown files", info.associationRegistered
     ? "GreenMD is registered as a handler"
     : "not registered — File > Set as default .md viewer");
@@ -1475,7 +1484,7 @@ function showAbout(info) {
       textContent: "Two dependencies, neither with any of its own: Markdig (BSD-2-Clause) turns markdown into HTML, and Microsoft's WebView2 draws it."
     }),
     Object.assign(document.createElement("div"), {
-      textContent: "No third-party JavaScript. The highlighter, layout, editor and file search are written for this project. Nothing is sent anywhere — the app makes no network requests."
+      textContent: "One third-party JavaScript file: Mermaid " + MERMAID_VERSION + " (" + MERMAID_LICENCE + "), committed to the repository rather than fetched, and loaded only when a document actually contains a diagram. The highlighter, layout, editor and file search are written for this project. Nothing is sent anywhere — the app makes no network requests."
     })
   );
 
@@ -1483,6 +1492,7 @@ function showAbout(info) {
     "GreenMD " + info.version + (info.build ? " (" + info.build + ")" : ""),
     ".NET " + info.dotnet,
     "WebView2 " + info.webView2,
+    "Mermaid " + MERMAID_VERSION,
     info.executable
   ].join(String.fromCharCode(10));
 
