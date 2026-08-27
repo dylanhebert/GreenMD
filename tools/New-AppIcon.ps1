@@ -50,23 +50,28 @@ function New-IconBitmap {
     $brush = New-Object System.Drawing.SolidBrush($accent)
     $g.FillPath($brush, $path)
 
-    $withChevron = $Size -ge 32
+    $drawD = $Size -ge 24
     $pen = New-Object System.Drawing.Pen($ink, [single]([Math]::Max(1.4, $Size * 0.075)))
     $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
     $pen.EndCap   = [System.Drawing.Drawing2D.LineCap]::Round
     $pen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
 
-    if ($withChevron) {
-        # "M" drawn as strokes rather than text -- a font glyph loses its shape
-        # once the tile gets small, and this keeps the weight consistent per size.
-        $mLeft   = $Size * 0.18
-        $mRight  = $Size * 0.60
-        $mTop    = $Size * 0.32
-        $mBottom = $Size * 0.66
+    if ($drawD) {
+        # "MD" drawn as one continuous path rather than text: the M's right-hand
+        # stroke is also the D's spine, so the two letters share an edge instead of
+        # sitting next to each other. Strokes rather than a font glyph because a
+        # glyph loses its shape as the tile shrinks.
+        $mLeft   = $Size * 0.13
+        $mRight  = $Size * 0.52
+        $mTop    = $Size * 0.29
+        $mBottom = $Size * 0.71
         $mMidX   = ($mLeft + $mRight) / 2
-        $mMidY   = $Size * 0.52
+        $mMidY   = $Size * 0.50
 
-        $g.DrawLines($pen, @(
+        $letters = New-Object System.Drawing.Drawing2D.GraphicsPath
+
+        # M, ending at the foot of the shared stroke.
+        $letters.AddLines(@(
             (New-Object System.Drawing.PointF([single]$mLeft,  [single]$mBottom)),
             (New-Object System.Drawing.PointF([single]$mLeft,  [single]$mTop)),
             (New-Object System.Drawing.PointF([single]$mMidX,  [single]$mMidY)),
@@ -74,18 +79,20 @@ function New-IconBitmap {
             (New-Object System.Drawing.PointF([single]$mRight, [single]$mBottom))
         ))
 
-        # Down chevron, right of the M.
-        $cx   = $Size * 0.80
-        $cTop = $Size * 0.40
-        $cBot = $Size * 0.66
-        $cArm = $Size * 0.11
+        # The D's bowl, from the top of that stroke round to its foot. A cubic with
+        # control points offset by two thirds of the half-height approximates a
+        # half-circle closely enough to read as a D at 24px.
+        $reach = ($mBottom - $mTop) * 0.66
 
-        $g.DrawLine($pen, [single]$cx, [single]$cTop, [single]$cx, [single]$cBot)
-        $g.DrawLines($pen, @(
-            (New-Object System.Drawing.PointF([single]($cx - $cArm), [single]($cBot - $cArm))),
-            (New-Object System.Drawing.PointF([single]$cx,           [single]$cBot)),
-            (New-Object System.Drawing.PointF([single]($cx + $cArm), [single]($cBot - $cArm)))
-        ))
+        $letters.StartFigure()
+        $letters.AddBezier(
+            (New-Object System.Drawing.PointF([single]$mRight,           [single]$mTop)),
+            (New-Object System.Drawing.PointF([single]($mRight + $reach), [single]$mTop)),
+            (New-Object System.Drawing.PointF([single]($mRight + $reach), [single]$mBottom)),
+            (New-Object System.Drawing.PointF([single]$mRight,           [single]$mBottom)))
+
+        $g.DrawPath($pen, $letters)
+        $letters.Dispose()
     }
     else {
         # Small sizes: one fat M filling the tile.
