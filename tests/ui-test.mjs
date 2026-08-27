@@ -463,6 +463,19 @@ await spyAt(1200);
 check("scroll-spy follows further scrolling",
       $("#outline a.current")?.textContent === "Third", $("#outline a.current")?.textContent);
 
+// Clicking an outline entry lands its heading scroll-margin-top below the pane top,
+// not at it. The spy must treat that as reached, or the heading above stays lit.
+await spyAt(480);   // h2 sits at 500: landed 20px below the top, as a click leaves it
+check("a heading landed at its scroll margin counts as reached",
+      $("#outline a.current")?.textContent === "Second", $("#outline a.current")?.textContent);
+
+const spySlack = parseFloat(
+  readFileSync(WEB + "app.js", "utf8").match(/const SPY_SLACK = ([\d.]+)/)?.[1] ?? "NaN");
+const headingMargin = parseFloat(
+  cssText.match(/scroll-margin-top:\s*([\d.]+)px/)?.[1] ?? "NaN");
+check("spy slack exceeds the heading scroll margin",
+      spySlack > headingMargin, `slack ${spySlack} vs margin ${headingMargin}`);
+
 // --- task list checkboxes write back to the file ---
 send("doc-opened", {
   path: "C:" + SEP + "docs" + SEP + "todo.md",

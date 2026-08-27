@@ -756,6 +756,11 @@ function renderAll({ keepAnchors = true, save = true } = {}) {
 
 // ---------- outline ----------
 
+// A clicked outline entry lands its heading scroll-margin-top (styles.css) below
+// the pane top, so the spy must count a heading that far down as already reached --
+// with less slack than the margin, the heading above the clicked one stays lit.
+const SPY_SLACK = 24;
+
 /** The last heading at or above the top of the viewport -- what the reader is under. */
 function currentHeadingId(scroller) {
   if (!scroller) return null;
@@ -764,7 +769,7 @@ function currentHeadingId(scroller) {
   let id = null;
 
   for (const heading of scroller.querySelectorAll("h1[id],h2[id],h3[id],h4[id],h5[id],h6[id]")) {
-    if (heading.offsetTop > top + 12) break;
+    if (heading.offsetTop > top + SPY_SLACK) break;
     id = heading.id;
   }
   return id;
