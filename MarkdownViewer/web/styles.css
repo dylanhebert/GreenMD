@@ -75,14 +75,27 @@ html, body {
 body.resizing-col, body.resizing-col * { cursor: col-resize !important; user-select: none; }
 body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-select: none; }
 
+/*
+ * Third and last place this trap appeared. A pane's children are the tab strip, the
+ * header, an optional notice, and two content views of which exactly one is hidden --
+ * so the number of in-flow children changes at runtime, and a fixed row template
+ * assigns the wrong row to everything the moment one of them disappears.
+ */
 .pane {
   position: relative;
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   background: var(--bg);
 }
+
+.pane > .tabstrip,
+.pane > .dochead,
+.pane > .pane-notice { flex: 0 0 auto; }
+
+.pane > .doc,
+.pane > .editor { flex: 1 1 auto; min-height: 0; }
 
 /* Only worth showing which pane has focus once there is more than one. */
 .panes .split .pane.pane-active .dochead { box-shadow: inset 2px 0 0 var(--live); }
@@ -602,7 +615,6 @@ mark.find-current {
 .editor {
   display: block;
   width: 100%;
-  height: 100%;
   padding: 20px 26px;
   font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
   line-height: 1.65;

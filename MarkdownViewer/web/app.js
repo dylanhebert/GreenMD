@@ -169,7 +169,7 @@ function paintDoc(pane) {
   }
 }
 
-function buildTabstrip(pane, element) {
+function buildTabstrip(pane) {
   const strip = document.createElement("div");
   strip.className = "tabstrip";
 
@@ -219,10 +219,10 @@ function buildTabstrip(pane, element) {
   add.addEventListener("click", () => { Layout.setActive(pane.id); post("pick-file"); });
   strip.append(add);
 
-  element.append(strip);
+  return strip;
 }
 
-function buildHeader(pane, element) {
+function buildHeader(pane) {
   const doc = pane.active ? docs.get(pane.active) : null;
 
   const header = document.createElement("header");
@@ -267,13 +267,16 @@ function buildHeader(pane, element) {
 
   meta.append(updated, mode, badge);
   header.append(id, meta);
-  element.append(header);
+  return header;
 }
 
-/** Called by Layout for each pane after the skeleton is rebuilt. */
+/**
+ * Called by Layout for each pane after the skeleton is rebuilt.
+ * The child order here is the contract: tab strip, header, notice, then the two
+ * content views. refreshPaneChrome must preserve it.
+ */
 function renderPane(pane, element) {
-  buildTabstrip(pane, element);
-  buildHeader(pane, element);
+  element.append(buildTabstrip(pane), buildHeader(pane));
 
   const notice = document.createElement("div");
   notice.className = "pane-notice";
@@ -671,20 +674,19 @@ function syncOpenPaths() {
   post("sync-open", Layout.openPaths());
 }
 
-/** Rebuilds one pane's tab strip and header without touching its scroll position. */
+/**
+ * Rebuilds one pane's tab strip and header in place, without touching the document
+ * or its scroll position. Replacing each node where it already sits is the only way
+ * to keep the child order intact -- appending and then moving things around is what
+ * previously left the editor above the tab strip and the header in the middle.
+ */
 function refreshPaneChrome(pane) {
   const element = panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"]`);
   if (!element) return;
 
-  element.querySelector(".tabstrip")?.remove();
-  element.querySelector(".dochead")?.remove();
+  element.querySelector(".tabstrip")?.replaceWith(buildTabstrip(pane));
+  element.querySelector(".dochead")?.replaceWith(buildHeader(pane));
 
-  const scroller = element.querySelector(".doc");
-  buildTabstrip(pane, element);
-  buildHeader(pane, element);
-
-  // Both were appended at the end; put them back above the document.
-  if (scroller) element.insertBefore(scroller, null);
   Zoom.apply("pane:" + pane.id);
 }
 
@@ -1100,6 +1102,13 @@ function measureLayout() {
       firstWidth: links[0] ? Math.round(links[0].getBoundingClientRect().width) : null,
       anyTruncating: links.some(a => a.scrollWidth > a.clientWidth)
     },
+    // The level that actually broke: a pane's own children and their order.
+    paneChildren: pane ? [...pane.children].map(c => ({
+      cls: c.className.split(" ")[0],
+      hidden: c.hidden,
+      display: getComputedStyle(c).display,
+      box: box(c)
+    })) : [],
     shellChildren: shell ? [...shell.children].map(c => ({
       tag: c.tagName.toLowerCase(),
       cls: c.className,
@@ -1131,6 +1140,8 @@ function snapshotState() {
     id: pane.id,
     active: pane.active,
     tabs: pane.tabs.length,
+    childOrder: [...(panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"]`)?.children ?? [])]
+      .map(c => c.className.split(" ")[0] + (c.hidden ? "(hidden)" : "")),
     headerStamp: (() => {
       const el = panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"] .dochead-updated`);
       return el ? { text: el.textContent, dataset: el.dataset.updated } : null;

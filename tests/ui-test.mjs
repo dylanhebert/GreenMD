@@ -523,6 +523,37 @@ check("external change does not overwrite unsaved text",
 key("e", { ctrlKey: true });
 check("Ctrl+E returns to the rendered view", $(".pane .doc")?.hidden === false);
 
+// --- pane child order ---
+// DOM order needs no layout, so unlike the geometry bugs this IS testable here.
+// It broke because refreshPaneChrome appended rebuilt chrome and then moved the
+// document, leaving the editor above the tab strip.
+function childOrder() {
+  return [...$(".pane").children].map(c => c.className.split(" ")[0]);
+}
+
+const EXPECTED = ["tabstrip", "dochead", "pane-notice", "doc", "editor", "drop-hint"];
+
+send("doc-opened", editDoc("order check"));
+check("pane children are in the documented order",
+      childOrder().join(",") === EXPECTED.join(","), childOrder().join(","));
+
+// refreshPaneChrome runs on this path; it must not reorder anything.
+send("doc-content", editDoc("order after content"));
+check("order survives a chrome rebuild",
+      childOrder().join(",") === EXPECTED.join(","), childOrder().join(","));
+
+key("e", { ctrlKey: true });
+check("order survives entering edit mode",
+      childOrder().join(",") === EXPECTED.join(","), childOrder().join(","));
+
+send("doc-updated", editDoc("order after update"));
+check("order survives a live reload while editing",
+      childOrder().join(",") === EXPECTED.join(","), childOrder().join(","));
+
+key("e", { ctrlKey: true });
+check("order survives leaving edit mode",
+      childOrder().join(",") === EXPECTED.join(","), childOrder().join(","));
+
 // --- report ---
 console.log("");
 for (const r of results) {
