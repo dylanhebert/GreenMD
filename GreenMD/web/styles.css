@@ -686,6 +686,21 @@ mark.find-current {
   white-space: pre-wrap;
   overflow-wrap: break-word;
   border: 0;
+  /*
+   * Width is a property that affects where text wraps, and it was the one the rule
+   * above did not actually equalise. The textarea scrolls, so it grows a scrollbar and
+   * its usable text width drops by the scrollbar's 10px; the <pre> is overflow:hidden
+   * and keeps the full width. Measured at 951 against 961. Any line long enough to fit
+   * in 961 but not 951 wrapped in the textarea and not in the highlight, and from that
+   * line down the caret sat one line below its own glyphs -- worse the further down the
+   * document you were, and only for documents with a line in that ten-pixel band, which
+   * is why it looked intermittent.
+   *
+   * Both layers reserve the gutter unconditionally. That also fixes the second half of
+   * it: without this the textarea's width changed the moment content grew past one
+   * screenful, so the wrap column moved while you typed.
+   */
+  scrollbar-gutter: stable;
 }
 
 .editor-highlight {

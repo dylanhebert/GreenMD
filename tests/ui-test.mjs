@@ -115,6 +115,22 @@ check("shell does not use grid-template-rows",
 check("body is the flexible child", /flex:\s*1 1 auto/.test(bodyRule),
       bodyRule.replace(/\s+/g, " "));
 
+// The editor is a textarea stacked on a <pre>, and they only stay aligned while both
+// wrap at the same column. The textarea scrolls and so reserves a scrollbar; the <pre>
+// is overflow:hidden and does not. Measured at 951px against 961px, which put the caret
+// a line below its glyphs for any document containing a line in that band. jsdom cannot
+// see widths, so this asserts the rule that equalises them is still declared on the
+// shared selector -- crude, but it is the difference between this regressing loudly and
+// regressing silently.
+const editorSharedRule =
+  cssText.match(/\.editor-highlight,\s*\n\.editor\s*\{[\s\S]*?\}/)?.[0] ?? "";
+
+check("both editor layers reserve the same scrollbar gutter",
+      /scrollbar-gutter:\s*stable/.test(editorSharedRule),
+      editorSharedRule.replace(/\s+/g, " ").slice(0, 200));
+check("the gutter rule is on the shared selector, not one layer",
+      editorSharedRule.includes(".editor-highlight") && editorSharedRule.includes(".editor"));
+
 // The same trap bit twice: a display:none child takes no grid cell, so a fixed
 // template silently shifts every sibling. Neither axis may use one.
 check("body is a flex row, not a fixed column template",

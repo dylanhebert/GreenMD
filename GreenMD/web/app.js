@@ -1708,7 +1708,23 @@ function measureLayout() {
         ? Math.abs([...body.children]
             .filter(c => !c.hidden)
             .reduce((sum, c) => sum + box(c).w, 0) - box(body).w) <= 2
-        : null
+        : null,
+      // Null when nothing is being edited, so this cannot pass by vacuously being true.
+      // Width first: it is the one that actually broke, and equal heights with unequal
+      // widths is luck rather than agreement -- it only holds until a line is long
+      // enough to wrap in the narrower layer.
+      editorLayersAgree: (() => {
+        const open = [...document.querySelectorAll(".editor-wrap")].filter(w => !w.hidden);
+        if (open.length === 0) return null;
+
+        return open.every(w => {
+          const e = w.querySelector(".editor");
+          const p = w.querySelector(".editor-highlight");
+          if (!e || !p) return false;
+          return Math.abs(e.clientWidth - p.clientWidth) <= 1
+                 && Math.abs(e.scrollHeight - p.scrollHeight) <= 2;
+        });
+      })()
     },
     mermaid: {
       rendered: document.querySelectorAll(".mermaid-figure svg").length,
@@ -1736,7 +1752,43 @@ function measureLayout() {
       hidden: c.hidden,
       display: getComputedStyle(c).display,
       box: box(c)
-    })) : []
+    })) : [],
+    // The editor is two stacked layers and only works while they agree on per-line
+    // metrics. line-height is a unitless ratio over a zoomed font-size, so it resolves
+    // to a fraction -- 15px x 1.65 = 24.75px -- and if the textarea rounds per line
+    // where the <pre> does not, the caret drifts further from the glyphs the further
+    // down the document you go. Reported per layer so the disagreement is visible
+    // rather than inferred.
+    editors: [...document.querySelectorAll(".editor-wrap")].map(wrap => {
+      const editor = wrap.querySelector(".editor");
+      const pre = wrap.querySelector(".editor-highlight");
+      const code = wrap.querySelector(".editor-highlight code");
+      if (!editor || !pre || !code) return null;
+
+      const es = getComputedStyle(editor);
+      const ps = getComputedStyle(pre);
+      const newline = String.fromCharCode(10);
+
+      return {
+        hidden: wrap.hidden,
+        lineHeight: { editor: es.lineHeight, highlight: ps.lineHeight },
+        fontSize: { editor: es.fontSize, highlight: ps.fontSize },
+        padTop: { editor: es.paddingTop, highlight: ps.paddingTop },
+        padBottom: { editor: es.paddingBottom, highlight: ps.paddingBottom },
+        lines: {
+          value: editor.value.split(newline).length,
+          highlighted: code.textContent.split(newline).length
+        },
+        scrollHeight: { editor: editor.scrollHeight, highlight: pre.scrollHeight },
+        clientHeight: { editor: editor.clientHeight, highlight: pre.clientHeight },
+        scrollTop: { editor: editor.scrollTop, highlight: pre.scrollTop },
+        // Same text in the same box, so any content-height difference is the two
+        // layers disagreeing about a line. The caret drift at the bottom is this.
+        contentHeightDelta: editor.scrollHeight - pre.scrollHeight,
+        caretLine: editor.value.slice(0, editor.selectionStart).split(newline).length,
+        endsWithNewline: editor.value.endsWith(newline)
+      };
+    }).filter(Boolean)
   };
 }
 
@@ -1769,9 +1821,47 @@ function snapshotState() {
     })()
   }));
 
+  // Editor geometry belongs in the streaming dump rather than the one-shot layout dump:
+  // the source arrives from the host a round trip after edit mode opens, so a snapshot
+  // taken two frames in measures an empty textarea. This also makes before/after
+  // visible across a keystroke, which is the only way to see a caret drift appear.
+  const editors = [...document.querySelectorAll(".editor-wrap")]
+    .filter(wrap => !wrap.hidden)
+    .map(wrap => {
+      const editor = wrap.querySelector(".editor");
+      const pre = wrap.querySelector(".editor-highlight");
+      const code = wrap.querySelector(".editor-highlight code");
+      if (!editor || !pre || !code) return null;
+
+      const newline = String.fromCharCode(10);
+      const style = getComputedStyle(editor);
+
+      return {
+        lineHeight: style.lineHeight,
+        lines: {
+          value: editor.value.split(newline).length,
+          highlighted: code.textContent.split(newline).length
+        },
+        scrollHeight: { editor: editor.scrollHeight, highlight: pre.scrollHeight },
+        clientHeight: editor.clientHeight,
+        // The textarea grows a scrollbar and the <pre> does not, so their usable text
+        // widths can differ -- and different widths mean the two layers wrap at
+        // different columns, which no amount of matching font rules will fix.
+        clientWidth: { editor: editor.clientWidth, highlight: pre.clientWidth },
+        widthDelta: editor.clientWidth - pre.clientWidth,
+        scrollTop: { editor: editor.scrollTop, highlight: pre.scrollTop },
+        contentHeightDelta: editor.scrollHeight - pre.scrollHeight,
+        scrollTopDelta: editor.scrollTop - pre.scrollTop,
+        caretLine: editor.value.slice(0, editor.selectionStart).split(newline).length,
+        endsWithNewline: editor.value.endsWith(newline)
+      };
+    })
+    .filter(Boolean);
+
   return {
     now: new Date().toISOString(),
     panes,
+    editors,
     docs: [...docs.values()].map(d => ({ path: d.path, loadedAt: d.loadedAt })),
     recentMessages: messageLog.slice(-25)
   };
