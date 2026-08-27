@@ -948,6 +948,19 @@ mark.find-current {
 .menu-keys { margin-left: auto; font-size: 11px; color: var(--text-muted); }
 .menu-separator { height: 1px; margin: 4px 0; background: var(--border); }
 
+/* The tab context menu: the dropdown look, but at the pointer rather than under a
+   menu title, so it positions against the viewport. */
+.context-menu {
+  position: fixed;
+  z-index: 30;
+  min-width: 200px;
+  padding: 4px 0;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
+}
+
 /* ---------- side panel dividers ---------- */
 
 .body-divider {

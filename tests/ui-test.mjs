@@ -1290,6 +1290,85 @@ check("a drop during a tab drag posts no dropped-files",
       posted.filter(m => m.type === "dropped-files").length === 1);
 dragTab.dispatchEvent(dragEvent("dragend", {}));
 
+// --- tab context menu ---
+const CTX_B = "C:" + SEP + "docs" + SEP + "ctx-b.md";
+const CTX_C = "C:" + SEP + "docs" + SEP + "ctx-c.md";
+send("doc-opened", doc("C:" + SEP + "docs" + SEP + "ctx-a.md", "ctx-a.md"));
+send("doc-opened", doc(CTX_B, "ctx-b.md"));
+send("doc-opened", doc(CTX_C, "ctx-c.md"));
+
+const tabFor = path => $$(".tab").find(t => t.dataset.path === path);
+const contextItemByLabel = label =>
+  $$(".context-menu .menu-item").find(i => i.textContent === label);
+function rightClickTab(path) {
+  const event = new window.MouseEvent("contextmenu",
+    { bubbles: true, cancelable: true, clientX: 40, clientY: 40 });
+  tabFor(path).dispatchEvent(event);
+  return event;
+}
+
+const rightClick = rightClickTab(CTX_B);
+check("right-clicking a tab opens the context menu", !!$(".context-menu"));
+check("the native context menu is suppressed", rightClick.defaultPrevented);
+check("it offers close, close others and close all",
+      $$(".context-menu .menu-item").map(i => i.textContent).join("|")
+      === "Close|Close others|Close all",
+      $$(".context-menu .menu-item").map(i => i.textContent).join("|"));
+
+key("Escape");
+check("Escape closes the context menu", !$(".context-menu"));
+
+rightClickTab(CTX_B);
+window.document.body.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true }));
+check("clicking elsewhere closes the context menu", !$(".context-menu"));
+
+rightClickTab(CTX_B);
+contextItemByLabel("Close others").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+const ctxPaneTabs = () =>
+  [...(tabFor(CTX_B)?.closest(".pane")?.querySelectorAll(".tab") ?? [])].map(t => t.dataset.path);
+check("close others leaves only the clicked tab",
+      ctxPaneTabs().length === 1 && ctxPaneTabs()[0] === CTX_B, ctxPaneTabs().join(" | "));
+check("running a command closes the menu", !$(".context-menu"));
+
+rightClickTab(CTX_B);
+const greyedOthers = contextItemByLabel("Close others");
+check("close others greys out with a single tab",
+      greyedOthers?.classList.contains("unavailable")
+      && greyedOthers?.getAttribute("aria-disabled") === "true");
+greyedOthers?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("the greyed item closes no tabs", !$(".context-menu") && !!tabFor(CTX_B));
+check("the greyed item explains itself in the status bar",
+      $("#statusText").textContent.includes("No other tabs"), $("#statusText").textContent);
+
+// The context menu shares the menu bar's hover-out grace period.
+rightClickTab(CTX_B);
+$(".context-menu").dispatchEvent(new window.MouseEvent("mouseleave", { bubbles: false }));
+check("the context menu stays open during the grace period", !!$(".context-menu"));
+await new Promise(r => setTimeout(r, window.eval("Menu.closeGraceMs") + 120));
+check("hovering away closes the context menu", !$(".context-menu"));
+
+rightClickTab(CTX_B);
+$(".context-menu").dispatchEvent(new window.MouseEvent("mouseleave", { bubbles: false }));
+$(".context-menu").dispatchEvent(new window.MouseEvent("mouseenter", { bubbles: false }));
+await new Promise(r => setTimeout(r, window.eval("Menu.closeGraceMs") + 120));
+check("coming back within the grace period keeps the context menu open", !!$(".context-menu"));
+key("Escape");
+
+// Bulk close funnels through requestCloseTab, so a dirty tab keeps its guard.
+send("doc-opened", doc(CTX_C, "ctx-c.md"));
+key("e", { ctrlKey: true });
+send("doc-text", { path: CTX_C, text: "# ctx-c" });
+const ctxEditor = tabFor(CTX_C).closest(".pane").querySelector(".editor");
+ctxEditor.value = "# ctx-c edited";
+ctxEditor.dispatchEvent(new window.Event("input", { bubbles: true }));
+
+rightClickTab(CTX_B);
+contextItemByLabel("Close all").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("close all closes the clean tabs", !tabFor(CTX_B));
+check("close all keeps the dirty tab open", !!tabFor(CTX_C));
+check("the dirty survivor shows the unsaved notice",
+      tabFor(CTX_C)?.closest(".pane")?.querySelector(".pane-notice")?.hidden === false);
+
 // --- report ---
 console.log("");
 for (const r of results) {

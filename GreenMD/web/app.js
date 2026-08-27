@@ -984,6 +984,107 @@ panesEl.addEventListener("auxclick", (event) => {
   requestCloseTab(paneEl.dataset.paneId, tab.dataset.path);
 });
 
+// ---------- tab context menu ----------
+
+let contextMenuEl = null;
+let contextMenuCloseTimer = null;
+
+function cancelContextMenuClose() {
+  if (contextMenuCloseTimer === null) return;
+  clearTimeout(contextMenuCloseTimer);
+  contextMenuCloseTimer = null;
+}
+
+function closeTabContextMenu() {
+  cancelContextMenuClose();
+  if (!contextMenuEl) return;
+  contextMenuEl.remove();
+  contextMenuEl = null;
+}
+
+function contextItem(label, { unavailable = null, run }) {
+  const item = document.createElement("button");
+  item.className = "menu-item" + (unavailable ? " unavailable" : "");
+  item.type = "button";
+  item.setAttribute("aria-disabled", String(!!unavailable));
+  if (unavailable) item.title = unavailable;
+
+  const text = document.createElement("span");
+  text.textContent = label;
+  item.append(text);
+
+  // Same contract as the menu bar: a greyed item explains itself instead of
+  // silently doing nothing.
+  item.addEventListener("click", () => {
+    closeTabContextMenu();
+    if (unavailable) { statusTextEl.textContent = unavailable; return; }
+    run();
+  });
+  return item;
+}
+
+function openTabContextMenu(event, paneId, path) {
+  closeTabContextMenu();
+
+  const pane = Layout.pane(paneId);
+  if (!pane) return;
+
+  const others = pane.tabs.filter(p => p !== path);
+
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+
+  // Every close funnels through requestCloseTab, so a dirty tab keeps its guard:
+  // clean tabs go, dirty ones stay open with the unsaved-changes notice.
+  menu.append(
+    contextItem("Close", { run: () => requestCloseTab(paneId, path) }),
+    contextItem("Close others", {
+      unavailable: others.length ? null : "No other tabs in this pane.",
+      run: () => { for (const other of others) requestCloseTab(paneId, other); }
+    }),
+    contextItem("Close all", {
+      run: () => { for (const open of [...pane.tabs]) requestCloseTab(paneId, open); }
+    })
+  );
+
+  // Same grace period as the menu bar: leaving for a frame and coming back must
+  // not snap the menu shut.
+  menu.addEventListener("mouseleave", () => {
+    cancelContextMenuClose();
+    contextMenuCloseTimer = setTimeout(() => {
+      contextMenuCloseTimer = null;
+      closeTabContextMenu();
+    }, Menu.closeGraceMs);
+  });
+  menu.addEventListener("mouseenter", cancelContextMenuClose);
+
+  document.body.append(menu);
+
+  // At the pointer, pulled back inside the window when it would poke out.
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = Math.max(0, Math.min(event.clientX, window.innerWidth - rect.width - 4)) + "px";
+  menu.style.top = Math.max(0, Math.min(event.clientY, window.innerHeight - rect.height - 4)) + "px";
+
+  contextMenuEl = menu;
+}
+
+panesEl.addEventListener("contextmenu", (event) => {
+  const tab = event.target.closest("[data-path]");
+  const paneEl = event.target.closest(".pane");
+  if (!tab || !paneEl) return;
+
+  event.preventDefault();
+  openTabContextMenu(event, paneEl.dataset.paneId, tab.dataset.path);
+});
+
+document.addEventListener("mousedown", (event) => {
+  if (contextMenuEl && !contextMenuEl.contains(event.target)) closeTabContextMenu();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && contextMenuEl) { closeTabContextMenu(); event.stopPropagation(); }
+});
+
 // ---------- host messages ----------
 
 /** The host cannot know which pane is active, so the UI owns the window title. */
