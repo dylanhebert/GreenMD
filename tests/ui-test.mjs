@@ -523,6 +523,80 @@ check("external change does not overwrite unsaved text",
 key("e", { ctrlKey: true });
 check("Ctrl+E returns to the rendered view", $(".pane .doc")?.hidden === false);
 
+// --- closing a dirty tab must not lose work ---
+// Its own path: EDIT_PATH's buffer was marked stale by the external-change test
+// above, and that notice would mask the close prompt.
+const CLOSE_PATH = "C:" + SEP + "docs" + SEP + "closeguard.md";
+function closeDoc() {
+  return {
+    path: CLOSE_PATH, title: "closeguard.md", folder: "C:" + SEP + "docs",
+    html: '<h1 id="c">Close guard</h1><p>body</p>',
+    outline: [{ level: 1, text: "Close guard", id: "c" }],
+    missing: false, loadedAt: new Date().toISOString()
+  };
+}
+
+send("doc-opened", closeDoc());
+key("e", { ctrlKey: true });
+send("doc-text", { path: CLOSE_PATH, text: SRC_CLEAN });
+$(".pane .editor").value = SRC_MINE;
+$(".pane .editor").dispatchEvent(new window.Event("input", { bubbles: true }));
+// Scoped to this tab: an earlier test deliberately leaves its own buffer dirty.
+const closeTabEl = () => $(`.pane .tab[data-path="${window.CSS.escape(CLOSE_PATH)}"]`);
+check("tab marked dirty before close attempt",
+      closeTabEl()?.classList.contains("dirty") === true,
+      closeTabEl()?.className);
+check("header shows an unsaved badge", $(".dochead-unsaved")?.hidden === false);
+
+const tabsBeforeClose = $$(".pane .tab").length;
+$(".pane .tab.active .tab-close").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("closing a dirty tab is refused", $$(".pane .tab").length === tabsBeforeClose,
+      `${tabsBeforeClose} -> ${$$(".pane .tab").length}`);
+check("the refused tab is still present", !!closeTabEl());
+check("close prompt offers save, discard and keep",
+      $$(".pane .pane-notice button").length === 3,
+      [...$$(".pane .pane-notice button")].map(b => b.textContent).join("/"));
+check("edited text is still intact", $(".pane .editor")?.value === SRC_MINE);
+
+// "Keep editing" dismisses without closing.
+[...$$(".pane .pane-notice button")].find(b => b.textContent === "Keep editing")
+  .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("keep editing dismisses the prompt", $(".pane .pane-notice")?.hidden === true);
+check("keep editing does not close the tab", $$(".pane .tab").length === tabsBeforeClose);
+
+// Discard closes and drops the buffer.
+$(".pane .tab.active .tab-close").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+[...$$(".pane .pane-notice button")].find(b => b.textContent === "Discard and close")
+  .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("discard closes the tab", $$(".pane .tab").length === tabsBeforeClose - 1,
+      `${tabsBeforeClose} -> ${$$(".pane .tab").length}`);
+
+// --- side panel toggles ---
+check("outline panel starts visible", $(".pane-outline").hidden === false);
+$("#toggleOutline").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("outline toggle hides the panel", $(".pane-outline").hidden === true);
+check("outline toggle reflects the off state",
+      $("#toggleOutline").classList.contains("on") === false);
+key("O", { ctrlKey: true, shiftKey: true });
+check("Ctrl+Shift+O brings it back", $(".pane-outline").hidden === false);
+
+// With no workspace bound there is nothing to show, so the button offers to pick one.
+const beforePick = posted.filter(m => m.type === "pick-folder").length;
+$("#toggleSidebar").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("files toggle asks for a folder when none is open",
+      posted.filter(m => m.type === "pick-folder").length === beforePick + 1);
+
+// Panel state must round-trip through the session.
+$("#toggleOutline").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await new Promise(r => setTimeout(r, 600));
+const panelSave = posted.filter(m => m.type === "save-session").pop();
+check("panel state is persisted", panelSave?.payload?.panels?.outline === false,
+      JSON.stringify(panelSave?.payload?.panels));
+
+send("session", { ...panelSave.payload, panels: { sidebar: true, outline: true } });
+check("restored panel state is applied, not just read",
+      $(".pane-outline").hidden === false);
+
 // --- pane child order ---
 // DOM order needs no layout, so unlike the geometry bugs this IS testable here.
 // It broke because refreshPaneChrome appended rebuilt chrome and then moved the

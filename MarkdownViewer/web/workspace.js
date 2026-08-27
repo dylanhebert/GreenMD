@@ -13,6 +13,7 @@ window.Workspace = (() => {
   let data = null;
   let expanded = new Set();
   let hooks = {};
+  let visible = true;
 
   let treeEl = null;
   let nameEl = null;
@@ -64,6 +65,10 @@ window.Workspace = (() => {
 
   function root() { return data ? data.root : null; }
 
+  function setVisible(next) { visible = !!next; render(); }
+  function isVisible() { return visible; }
+  function hasWorkspace() { return !!data; }
+
   function expandedPaths() { return [...expanded]; }
 
   function setExpanded(paths) {
@@ -83,7 +88,8 @@ window.Workspace = (() => {
   function render() {
     if (!sidebarEl) return;
 
-    sidebarEl.hidden = !data;
+    // Hidden when there is no workspace, or when the user has collapsed the panel.
+    sidebarEl.hidden = !data || !visible;
     if (!data) { treeEl.replaceChildren(); return; }
 
     nameEl.textContent = data.name;
@@ -291,7 +297,7 @@ window.Workspace = (() => {
   }
 
   return {
-    configure, set, render, root, files,
+    configure, set, render, root, files, setVisible, isVisible, hasWorkspace,
     expandedPaths, setExpanded, highlight,
     openQuick, closeQuick, isQuickOpen
   };

@@ -139,9 +139,19 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
   background: var(--bg-chrome);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
-  scrollbar-width: none;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+  scroll-behavior: smooth;
 }
-.tabstrip::-webkit-scrollbar { display: none; }
+.tabstrip::-webkit-scrollbar { height: 5px; }
+.tabstrip::-webkit-scrollbar-track { background: transparent; }
+.tabstrip::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+.tabstrip::-webkit-scrollbar-thumb:hover { background: #5f5f56; }
+
+/* Tabs must not shrink to nothing when the strip overflows -- they scroll instead. */
+.tabstrip .tab { flex: 0 0 auto; }
+.tabstrip .tab-add { position: sticky; right: 0; background: var(--bg-chrome); }
 
 .tab {
   display: flex;
@@ -408,6 +418,19 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 
 .status-right { margin-left: auto; color: var(--text-muted); }
 
+.panel-toggle {
+  padding: 1px 8px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.panel-toggle:hover { color: var(--text); border-color: var(--border-strong); }
+.panel-toggle.on { color: var(--live); border-color: #2a4d43; }
+
 [hidden] { display: none !important; }
 
 .status-action {
@@ -641,10 +664,23 @@ mark.find-current {
 .mode-button:hover { color: var(--text); border-color: var(--border-strong); }
 .mode-button.editing { color: var(--live); border-color: #2a4d43; }
 
+/* A literal bullet, not a CSS escape -- an escape sequence here was mangled
+   once already by the tooling that wrote this file. */
 .tab.dirty .tab-label::before {
-  content: "2 ";
+  content: "● ";
   color: var(--live);
 }
+
+.dochead-unsaved {
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--live);
+  background: #1b2521;
+  border: 1px solid #2a4d43;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+.dochead-unsaved[hidden] { display: none; }
 
 .pane-notice {
   padding: 5px 14px;

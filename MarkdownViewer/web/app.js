@@ -15,6 +15,9 @@ const findBarEl = document.getElementById("findBar");
 const findInputEl = document.getElementById("findInput");
 const findCountEl = document.getElementById("findCount");
 const findScopeEl = document.getElementById("findScope");
+const toggleSidebarEl = document.getElementById("toggleSidebar");
+const toggleOutlineEl = document.getElementById("toggleOutline");
+const outlineAsideEl = document.querySelector(".pane-outline");
 
 /** path -> { path, title, folder, html, outline, missing, loadedAt } */
 const docs = new Map();
@@ -23,6 +26,26 @@ const docs = new Map();
 let dragging = null;
 
 let welcome = null;
+
+/** Side panel visibility, persisted with the session. */
+const panels = { sidebar: true, outline: true };
+
+function applyPanels() {
+  Workspace.setVisible(panels.sidebar);
+  outlineAsideEl.hidden = !panels.outline;
+
+  toggleSidebarEl.classList.toggle("on", panels.sidebar && Workspace.hasWorkspace());
+  toggleOutlineEl.classList.toggle("on", panels.outline);
+}
+
+function togglePanel(which) {
+  // With no workspace bound there is nothing to show, so offer to pick one instead.
+  if (which === "sidebar" && !Workspace.hasWorkspace()) { post("pick-folder"); return; }
+
+  panels[which] = !panels[which];
+  applyPanels();
+  saveSession();
+}
 
 /** Most-recently-opened paths, newest first. Persisted with the session. */
 let recents = [];
@@ -219,6 +242,15 @@ function buildTabstrip(pane) {
   add.addEventListener("click", () => { Layout.setActive(pane.id); post("pick-file"); });
   strip.append(add);
 
+  // A vertical wheel over the strip scrolls it sideways -- with many tabs open the
+  // overflow is otherwise only reachable by dragging a 5px scrollbar.
+  strip.addEventListener("wheel", (event) => {
+    if (event.ctrlKey) return;                       // Ctrl+wheel is zoom
+    if (strip.scrollWidth <= strip.clientWidth) return;
+    event.preventDefault();
+    strip.scrollLeft += event.deltaY !== 0 ? event.deltaY : event.deltaX;
+  }, { passive: false });
+
   return strip;
 }
 
@@ -247,6 +279,11 @@ function buildHeader(pane) {
   const meta = document.createElement("div");
   meta.className = "dochead-meta";
 
+  const unsaved = document.createElement("span");
+  unsaved.className = "dochead-unsaved";
+  unsaved.textContent = "unsaved — Ctrl+S";
+  unsaved.hidden = !(pane.active && Editor.isDirty(pane.id, pane.active));
+
   const updated = document.createElement("span");
   updated.className = "dochead-updated";
   updated.dataset.updated = doc ? doc.loadedAt : "";
@@ -265,7 +302,7 @@ function buildHeader(pane) {
   badge.setAttribute("data-zoom-badge", "");
   badge.title = "Reset text size to 100%";
 
-  meta.append(updated, mode, badge);
+  meta.append(unsaved, updated, mode, badge);
   header.append(id, meta);
   return header;
 }
@@ -316,6 +353,16 @@ function renderPane(pane, element) {
   hint.className = "drop-hint";
   element.append(hint);
 
+  const activeTab = element.querySelector(".tab.active");
+  if (activeTab) {
+    const strip = element.querySelector(".tabstrip");
+    if (strip && strip.scrollWidth > strip.clientWidth) {
+      // Instant, not smooth: this runs during a render, not as a user gesture.
+      const left = activeTab.offsetLeft - (strip.clientWidth - activeTab.offsetWidth) / 2;
+      strip.scrollTo({ left: Math.max(0, left), behavior: "instant" });
+    }
+  }
+
   Zoom.register("pane:" + pane.id, 15, pane.zoom ?? 1);
   Zoom.apply("pane:" + pane.id);
 
@@ -360,9 +407,71 @@ function applyMode(pane) {
   updateNotice(pane);
 }
 
+/** Paths whose close was blocked because they had unsaved changes. */
+const closeBlocked = new Map();
+
+/** Closes a tab unconditionally. Callers go through requestCloseTab, not this. */
+function closeTab(paneId, path) {
+  rememberAnchors();
+  Editor.forget(paneId, path);
+  closeBlocked.delete(paneId);
+  Layout.closeTab(paneId, path);
+  renderAll({ keepAnchors: false });
+  syncOpenPaths();
+}
+
+/**
+ * Refuses to close a tab with unsaved changes and explains why. Silently discarding
+ * an edit because a tab was closed is the one thing a viewer must never do.
+ */
+function requestCloseTab(paneId, path) {
+  if (!Editor.isDirty(paneId, path)) { closeTab(paneId, path); return; }
+
+  closeBlocked.set(paneId, path);
+  const pane = Layout.pane(paneId);
+  if (pane) {
+    pane.active = path;
+    Layout.setActive(paneId);
+    renderAll({ keepAnchors: false });
+  }
+  statusTextEl.textContent = "Unsaved changes — save with Ctrl+S, or choose Discard.";
+}
+
 function updateNotice(pane) {
   const notice = noticeElementOf(pane);
   if (!notice) return;
+
+  const blocked = closeBlocked.get(pane.id);
+  if (blocked && pane.active === blocked && Editor.isDirty(pane.id, blocked)) {
+    notice.hidden = false;
+    notice.replaceChildren();
+    notice.append("This tab has unsaved changes.");
+
+    const save = document.createElement("button");
+    save.type = "button";
+    save.textContent = "Save and close";
+    save.addEventListener("click", () => { closeBlocked.set(pane.id, blocked); saveActive(false); });
+
+    const discard = document.createElement("button");
+    discard.type = "button";
+    discard.textContent = "Discard and close";
+    discard.addEventListener("click", () => {
+      Editor.forget(pane.id, blocked);
+      closeBlocked.delete(pane.id);
+      closeTab(pane.id, blocked);
+    });
+
+    const keep = document.createElement("button");
+    keep.type = "button";
+    keep.textContent = "Keep editing";
+    keep.addEventListener("click", () => {
+      closeBlocked.delete(pane.id);
+      updateNotice(pane);
+    });
+
+    notice.append(save, discard, keep);
+    return;
+  }
 
   const stale = pane.active && modeOf(pane, pane.active) === "edit"
                 && Editor.isStale(pane.id, pane.active);
@@ -415,6 +524,10 @@ function saveActive(force) {
 /** Dirty state lives per buffer, but the marker belongs on the tab. */
 function refreshDirtyMarks() {
   for (const pane of Layout.panes()) {
+    const badge = panesEl.querySelector(
+      `[data-pane-id="${CSS.escape(pane.id)}"] .dochead-unsaved`);
+    if (badge) badge.hidden = !(pane.active && Editor.isDirty(pane.id, pane.active));
+
     for (const path of pane.tabs) {
       const tab = panesEl.querySelector(
         `[data-pane-id="${CSS.escape(pane.id)}"] [data-path="${CSS.escape(path)}"]`);
@@ -606,10 +719,7 @@ panesEl.addEventListener("click", (event) => {
   const close = event.target.closest("[data-close]");
   if (close) {
     event.stopPropagation();
-    rememberAnchors();
-    Layout.closeTab(paneId, close.dataset.close);
-    renderAll({ keepAnchors: false });
-    syncOpenPaths();
+    requestCloseTab(paneId, close.dataset.close);
     return;
   }
 
@@ -655,10 +765,7 @@ panesEl.addEventListener("auxclick", (event) => {
   if (!tab || !paneEl) return;
 
   event.preventDefault();
-  rememberAnchors();
-  Layout.closeTab(paneEl.dataset.paneId, tab.dataset.path);
-  renderAll({ keepAnchors: false });
-  syncOpenPaths();
+  requestCloseTab(paneEl.dataset.paneId, tab.dataset.path);
 });
 
 // ---------- host messages ----------
@@ -693,8 +800,16 @@ function refreshPaneChrome(pane) {
 function restoreSession(state) {
   if (!state) return;
 
+  if (state.panels && typeof state.panels === "object") {
+    panels.sidebar = state.panels.sidebar !== false;
+    panels.outline = state.panels.outline !== false;
+  }
   if (Array.isArray(state.recents)) recents = state.recents.slice(0, RECENT_LIMIT);
   if (Array.isArray(state.expanded)) Workspace.setExpanded(state.expanded);
+
+  // Reading the panel state is not enough; it has to be applied.
+  applyPanels();
+
   if (state.layout) Layout.restore(state.layout);
 
   renderAll({ keepAnchors: false, save: false });
@@ -712,6 +827,7 @@ function saveSession() {
     post("save-session", {
       workspace: Workspace.root(),
       expanded: Workspace.expandedPaths(),
+      panels: { ...panels },
       recents,
       layout: Layout.serialize()
     });
@@ -729,6 +845,7 @@ host.addEventListener("message", (event) => {
 
     case "workspace":
       Workspace.set(payload);
+      applyPanels();
       refreshStatus();
       saveSession();
       break;
@@ -764,6 +881,14 @@ host.addEventListener("message", (event) => {
       if (payload.saved) {
         Editor.markSaved(payload.path);
         refreshDirtyMarks();
+
+        // A save requested from the close prompt finishes the close.
+        for (const [paneId, blockedPath] of [...closeBlocked]) {
+          if (blockedPath !== payload.path) continue;
+          closeBlocked.delete(paneId);
+          closeTab(paneId, blockedPath);
+        }
+
         for (const pane of Layout.panesShowing(payload.path)) updateNotice(pane);
         statusTextEl.textContent = "Saved " + payload.path.split(/[\/]/).pop();
       } else if (payload.conflict) {
@@ -864,11 +989,6 @@ document.addEventListener("keydown", (event) => {
   const pane = Layout.activePane();
 
   switch (event.key) {
-    case "o":
-      event.preventDefault();
-      post("pick-file");
-      return;
-
     case "e":
       event.preventDefault();
       toggleMode(Layout.activePane());
@@ -884,6 +1004,17 @@ document.addEventListener("keydown", (event) => {
       openFind();
       return;
 
+    case "b":
+      event.preventDefault();
+      togglePanel("sidebar");
+      return;
+
+    case "O":
+    case "o":
+      event.preventDefault();
+      if (event.shiftKey) togglePanel("outline"); else post("pick-file");
+      return;
+
     case "k":
       event.preventDefault();
       post("pick-folder");
@@ -896,12 +1027,7 @@ document.addEventListener("keydown", (event) => {
 
     case "w":
       event.preventDefault();
-      if (pane && pane.active) {
-        rememberAnchors();
-        Layout.closeTab(pane.id, pane.active);
-        renderAll({ keepAnchors: false });
-        syncOpenPaths();
-      }
+      if (pane && pane.active) requestCloseTab(pane.id, pane.active);
       return;
 
     case "0": event.preventDefault(); Zoom.set(scope, 1); return;
@@ -985,6 +1111,9 @@ document.getElementById("findNext").addEventListener("click", () => { Find.next(
 document.getElementById("findPrev").addEventListener("click", () => { Find.previous(); updateFindCount(); });
 document.getElementById("findClose").addEventListener("click", closeFind);
 
+toggleSidebarEl.addEventListener("click", () => togglePanel("sidebar"));
+toggleOutlineEl.addEventListener("click", () => togglePanel("outline"));
+
 openFolderEl.addEventListener("click", () => post("pick-folder"));
 
 closeWorkspaceEl.addEventListener("click", () => {
@@ -1037,6 +1166,7 @@ function highlightActivePane() {
   }
 }
 
+applyPanels();
 Layout.mount(panesEl);
 Zoom.applyAll();
 renderAll({ keepAnchors: false });
