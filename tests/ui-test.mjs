@@ -817,6 +817,52 @@ send("session", { ...panelSave.payload, panels: { sidebar: true, outline: true }
 check("restored panel state is applied, not just read",
       $(".pane-outline").hidden === false);
 
+// --- opening a file that is already open ---
+// Launching GreenMD with a file must join the restored session rather than replace
+// it, and must jump to an existing tab rather than opening a second copy.
+const OPEN_A = "C:" + SEP + "reopen" + SEP + "alpha.md";
+const OPEN_B = "C:" + SEP + "reopen" + SEP + "beta.md";
+function reopenDoc(path, title) {
+  return {
+    path, title, folder: "C:" + SEP + "reopen",
+    html: '<h1 id="r">' + title + '</h1>',
+    outline: [{ level: 1, text: title, id: "r" }],
+    missing: false, loadedAt: new Date().toISOString()
+  };
+}
+
+// A restored session with both files, then a split so they sit in different panes.
+send("session", {
+  panels: { sidebar: false, outline: true, swapped: false, sidebarWidth: 230, outlineWidth: 260 },
+  layout: {
+    type: "split", dir: "row", sizes: [0.5, 0.5],
+    children: [
+      { type: "pane", tabs: [OPEN_A], active: OPEN_A, zoom: 1, modes: {} },
+      { type: "pane", tabs: [OPEN_B], active: OPEN_B, zoom: 1, modes: {} }
+    ]
+  }
+});
+send("doc-content", reopenDoc(OPEN_A, "Alpha"));
+send("doc-content", reopenDoc(OPEN_B, "Beta"));
+
+const tabCount = () => $$(".pane .tab").length;
+check("restored session has one tab per pane", tabCount() === 2, `${tabCount()}`);
+
+// Make the first pane active, then "open" the file that lives in the second.
+window.eval("Layout.setActive(Layout.panes()[0].id)");
+send("doc-opened", reopenDoc(OPEN_B, "Beta"));
+
+check("opening an already-open file adds no duplicate tab", tabCount() === 2,
+      `${tabCount()} tabs: ` + $$(".pane .tab").map(t => t.title.split(SEP).pop()).join(", "));
+check("it focuses the pane that already had the file",
+      window.eval("Layout.activePane().active") === OPEN_B,
+      window.eval("Layout.activePane().active"));
+
+// A genuinely new file still opens as a new tab, in the active pane.
+const OPEN_C = "C:" + SEP + "reopen" + SEP + "gamma.md";
+send("doc-opened", reopenDoc(OPEN_C, "Gamma"));
+check("a new file still opens as a new tab", tabCount() === 3, `${tabCount()}`);
+
 // --- pane child order ---
 // DOM order needs no layout, so unlike the geometry bugs this IS testable here.
 // It broke because refreshPaneChrome appended rebuilt chrome and then moved the

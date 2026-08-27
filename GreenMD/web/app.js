@@ -962,7 +962,20 @@ host.addEventListener("message", (event) => {
       docs.set(payload.path, payload);
       noteRecent(payload.path);
       rememberAnchors();
-      Layout.addTab(Layout.activeId, payload.path);
+
+      // Launching with a file, or double-clicking one while the app is running,
+      // should join the session rather than duplicate it: if the file is already
+      // open somewhere, go to that tab instead of opening a second copy of it.
+      const showing = Layout.panesShowing(payload.path);
+      const target = showing.find(pane => pane.id === Layout.activeId) ?? showing[0];
+
+      if (target) {
+        target.active = payload.path;
+        Layout.setActive(target.id);
+      } else {
+        Layout.addTab(Layout.activeId, payload.path);
+      }
+
       renderAll({ keepAnchors: false });
       syncOpenPaths();
       break;
