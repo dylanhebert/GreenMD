@@ -50,46 +50,84 @@ function New-IconBitmap {
     $brush = New-Object System.Drawing.SolidBrush($accent)
     $g.FillPath($brush, $path)
 
-    $drawD = $Size -ge 24
-    $pen = New-Object System.Drawing.Pen($ink, [single]([Math]::Max(1.4, $Size * 0.075)))
+    # Small tiles get a thinner stroke and a wider mark. Both buy back the interior
+    # gaps -- the M's two notches and the bowl's counter -- which are what stop the
+    # whole thing collapsing into a blob at 16px.
+    $tight = $Size -lt 32
+    $stroke = if ($tight) { [Math]::Max(1.15, $Size * 0.072) } else { $Size * 0.075 }
+
+    $pen = New-Object System.Drawing.Pen($ink, [single]$stroke)
     $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
     $pen.EndCap   = [System.Drawing.Drawing2D.LineCap]::Round
     $pen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
 
-    if ($drawD) {
-        # "MD" drawn as one continuous path rather than text: the M's right-hand
-        # stroke is also the D's spine, so the two letters share an edge instead of
-        # sitting next to each other. Strokes rather than a font glyph because a
-        # glyph loses its shape as the tile shrinks.
-        $mLeft   = $Size * 0.13
-        $mRight  = $Size * 0.52
-        $mTop    = $Size * 0.29
-        $mBottom = $Size * 0.71
-        $mMidX   = ($mLeft + $mRight) / 2
-        $mMidY   = $Size * 0.50
+    if ($true) {
+        # "MD" stacked rather than side by side: the M sits on top, and below it a D
+        # turned a quarter turn so its flat back becomes the bar under the M and its
+        # bowl hangs downward. The two share that bar, which is what joins them.
+        #
+        # Stacking is naturally tall, so the proportions below are chosen to keep the
+        # whole mark close to square inside a square tile -- the ink is measured after
+        # generating, not assumed.
+        #
+        # Strokes rather than a font glyph, because a glyph loses its shape as the
+        # tile shrinks.
+        # The drawable box is derived rather than guessed, because a stroked path
+        # spills half its width past its own coordinates: a path placed exactly on
+        # the margin still paints over it. Padding is therefore the tile's inset,
+        # plus the clear space wanted, plus half the stroke.
+        #
+        # The floor of one pixel of clear space is what keeps the ink off the tile
+        # edge at 16px, where a percentage alone rounds away to nothing.
+        $clear = if ($tight) { [Math]::Max(1.0, $Size * 0.10) } else { $Size * 0.13 }
+        $pad   = $inset + $clear + ($stroke / 2)
+
+        $left   = $pad
+        $right  = $Size - $pad
+        $mTop   = $pad
+        $bottom = $Size - $pad
+
+        # Vertical split expressed against the box, so it holds at any size.
+        $span   = $bottom - $mTop
+        $shareY = $mTop + $span * 0.56   # the bar: feet of the M, back of the D
+        $sideY  = $mTop + $span * 0.70   # straight run before the bowl turns
+
+        $midX = ($left + $right) / 2
+        $vDip = $mTop + ($shareY - $mTop) * 0.62
 
         $letters = New-Object System.Drawing.Drawing2D.GraphicsPath
 
-        # M, ending at the foot of the shared stroke.
+        # M, its legs landing on the shared bar.
         $letters.AddLines(@(
-            (New-Object System.Drawing.PointF([single]$mLeft,  [single]$mBottom)),
-            (New-Object System.Drawing.PointF([single]$mLeft,  [single]$mTop)),
-            (New-Object System.Drawing.PointF([single]$mMidX,  [single]$mMidY)),
-            (New-Object System.Drawing.PointF([single]$mRight, [single]$mTop)),
-            (New-Object System.Drawing.PointF([single]$mRight, [single]$mBottom))
+            (New-Object System.Drawing.PointF([single]$left,  [single]$shareY)),
+            (New-Object System.Drawing.PointF([single]$left,  [single]$mTop)),
+            (New-Object System.Drawing.PointF([single]$midX,  [single]$vDip)),
+            (New-Object System.Drawing.PointF([single]$right, [single]$mTop)),
+            (New-Object System.Drawing.PointF([single]$right, [single]$shareY))
         ))
 
-        # The D's bowl, from the top of that stroke round to its foot. A cubic with
-        # control points offset by two thirds of the half-height approximates a
-        # half-circle closely enough to read as a D at 24px.
-        $reach = ($mBottom - $mTop) * 0.66
+        # The shared bar.
+        $letters.StartFigure()
+        $letters.AddLine(
+            (New-Object System.Drawing.PointF([single]$left,  [single]$shareY)),
+            (New-Object System.Drawing.PointF([single]$right, [single]$shareY)))
+
+        # The bowl, hanging from the bar. A cubic with both control points offset by C
+        # peaks at 0.75 * C, so C is derived from where the bowl should reach.
+        $drop = ($bottom - $sideY) / 0.75
 
         $letters.StartFigure()
+        $letters.AddLine(
+            (New-Object System.Drawing.PointF([single]$left, [single]$shareY)),
+            (New-Object System.Drawing.PointF([single]$left, [single]$sideY)))
         $letters.AddBezier(
-            (New-Object System.Drawing.PointF([single]$mRight,           [single]$mTop)),
-            (New-Object System.Drawing.PointF([single]($mRight + $reach), [single]$mTop)),
-            (New-Object System.Drawing.PointF([single]($mRight + $reach), [single]$mBottom)),
-            (New-Object System.Drawing.PointF([single]$mRight,           [single]$mBottom)))
+            (New-Object System.Drawing.PointF([single]$left,  [single]$sideY)),
+            (New-Object System.Drawing.PointF([single]$left,  [single]($sideY + $drop))),
+            (New-Object System.Drawing.PointF([single]$right, [single]($sideY + $drop))),
+            (New-Object System.Drawing.PointF([single]$right, [single]$sideY)))
+        $letters.AddLine(
+            (New-Object System.Drawing.PointF([single]$right, [single]$sideY)),
+            (New-Object System.Drawing.PointF([single]$right, [single]$shareY)))
 
         $g.DrawPath($pen, $letters)
         $letters.Dispose()
