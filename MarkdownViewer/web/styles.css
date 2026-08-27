@@ -523,7 +523,12 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 }
 .tree-dir { color: var(--text); }
 .tree-dir:hover, .tree-file:hover { background: #201f1d; color: var(--text); }
-.tree-file.current { color: var(--live); background: #1b2521; }
+.tree-file.current {
+  color: var(--live);
+  background: #1b2521;
+  box-shadow: inset 2px 0 0 var(--live);
+}
+.tree-file.current .tree-label { font-weight: 600; }
 
 .tree-caret { width: .8em; flex-shrink: 0; color: var(--text-muted); font-size: .85em; }
 .tree-label { overflow: hidden; text-overflow: ellipsis; }

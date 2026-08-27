@@ -15,6 +15,9 @@ window.Workspace = (() => {
   let hooks = {};
   let visible = true;
 
+  /** The file the active pane is showing. Owned here so a tree rebuild cannot lose it. */
+  let currentPath = null;
+
   let treeEl = null;
   let nameEl = null;
   let sidebarEl = null;
@@ -111,6 +114,32 @@ window.Workspace = (() => {
       note.textContent = "No markdown files here";
       treeEl.append(note);
     }
+
+    // render() replaces every row, so the marker has to be reapplied here rather
+    // than only when the active document changes -- otherwise expanding a folder,
+    // toggling the panel, or the workspace simply loading would clear it.
+    applyCurrent();
+  }
+
+  function applyCurrent() {
+    if (!treeEl) return;
+    for (const row of treeEl.querySelectorAll(".tree-file")) {
+      row.classList.toggle("current", row.dataset.path === currentPath);
+    }
+  }
+
+  /** Expands the folders containing a path so the row is actually reachable. */
+  function revealAncestors(path) {
+    if (!data || !path) return false;
+
+    let changed = false;
+    let entry = data.entries.find(e => e.path === path);
+
+    while (entry && entry.parent && entry.parent !== data.root) {
+      if (!expanded.has(entry.parent)) { expanded.add(entry.parent); changed = true; }
+      entry = data.entries.find(e => e.path === entry.parent);
+    }
+    return changed;
   }
 
   function build(parent, depth, container) {
@@ -155,12 +184,26 @@ window.Workspace = (() => {
     if (hooks.onOpenFile) hooks.onOpenFile(row.dataset.path);
   }
 
-  /** Marks which file the active pane is showing, so the tree tracks the reader. */
+  /**
+   * Marks which file the active pane is showing. Only reveals and scrolls when the
+   * path actually changes, so collapsing the folder of the open file is not
+   * immediately undone on the next render.
+   */
   function highlight(path) {
-    if (!treeEl) return;
-    for (const row of treeEl.querySelectorAll(".tree-file")) {
-      row.classList.toggle("current", row.dataset.path === path);
+    const moved = path !== currentPath;
+    currentPath = path || null;
+
+    if (moved && revealAncestors(currentPath)) {
+      render();
+      if (hooks.onChanged) hooks.onChanged();
+    } else {
+      applyCurrent();
     }
+
+    if (!moved || !currentPath || !treeEl) return;
+
+    const row = treeEl.querySelector(`.tree-file[data-path="${CSS.escape(currentPath)}"]`);
+    if (row) row.scrollIntoView({ block: "nearest" });
   }
 
   // ---------- quick open ----------
@@ -297,7 +340,7 @@ window.Workspace = (() => {
   }
 
   return {
-    configure, set, render, root, files, setVisible, isVisible, hasWorkspace,
+    configure, set, render, root, files, setVisible, isVisible, hasWorkspace, currentFile: () => currentPath,
     expandedPaths, setExpanded, highlight,
     openQuick, closeQuick, isQuickOpen
   };

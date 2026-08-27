@@ -571,6 +571,58 @@ $(".pane .tab.active .tab-close").dispatchEvent(new window.MouseEvent("click", {
 check("discard closes the tab", $$(".pane .tab").length === tabsBeforeClose - 1,
       `${tabsBeforeClose} -> ${$$(".pane .tab").length}`);
 
+// --- active file is marked in the tree ---
+// The marker was being destroyed by every tree rebuild, so each of these asserts a
+// path that previously cleared it.
+const TROOT = "C:" + SEP + "wsmark";
+const TSUB = TROOT + SEP + "deep";
+const TFILE = TSUB + SEP + "nested.md";
+
+send("doc-opened", {
+  path: TFILE, title: "nested.md", folder: TSUB,
+  html: '<h1 id="n">Nested</h1>', outline: [{ level: 1, text: "Nested", id: "n" }],
+  missing: false, loadedAt: new Date().toISOString()
+});
+
+send("workspace", {
+  root: TROOT, name: "wsmark", truncated: false,
+  entries: [
+    { path: TROOT + SEP + "top.md", name: "top.md", parent: TROOT, dir: false },
+    { path: TSUB, name: "deep", parent: TROOT, dir: true },
+    { path: TFILE, name: "nested.md", parent: TSUB, dir: false }
+  ]
+});
+
+const marked = () => $$("#tree .tree-file.current").map(r => r.dataset.path);
+
+check("active file is marked when the tree loads",
+      marked().length === 1 && marked()[0] === TFILE, marked().join(","));
+check("its folder was expanded so the row is visible",
+      !!$(`#tree .tree-file[data-path="${window.CSS.escape(TFILE)}"]`));
+
+// Expanding or collapsing a folder rebuilds the tree.
+$$("#tree .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+$$("#tree .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("marker survives a folder toggle",
+      marked().length === 1 && marked()[0] === TFILE, marked().join(","));
+
+// So does hiding and showing the panel.
+window.eval("Workspace.setVisible(false)");
+window.eval("Workspace.setVisible(true)");
+check("marker survives hiding the panel",
+      marked().length === 1 && marked()[0] === TFILE, marked().join(","));
+
+// Switching to another document moves the marker off.
+send("doc-opened", {
+  path: TROOT + SEP + "top.md", title: "top.md", folder: TROOT,
+  html: '<h1 id="t">Top</h1>', outline: [{ level: 1, text: "Top", id: "t" }],
+  missing: false, loadedAt: new Date().toISOString()
+});
+check("marker follows the active document",
+      marked().length === 1 && marked()[0] === TROOT + SEP + "top.md", marked().join(","));
+
+send("workspace", { closed: true });
+
 // --- side panel toggles ---
 check("outline panel starts visible", $(".pane-outline").hidden === false);
 $("#toggleOutline").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));

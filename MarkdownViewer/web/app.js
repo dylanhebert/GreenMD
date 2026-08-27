@@ -843,12 +843,18 @@ host.addEventListener("message", (event) => {
       renderAll();
       break;
 
-    case "workspace":
+    case "workspace": {
       Workspace.set(payload);
       applyPanels();
+
+      // The tree usually loads after the document, so the marker has to be set
+      // here too rather than only when the active document changes.
+      const active = Layout.activePane();
+      Workspace.highlight(active && active.active ? active.active : null);
       refreshStatus();
       saveSession();
       break;
+    }
 
     case "session":
       restoreSession(payload);
