@@ -130,6 +130,11 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 
 .tab.dragging { opacity: .4; }
 
+/* Insertion bar while a tab drags along a strip: on the leading edge of the tab it
+   would land ahead of, or the trailing edge of the last one for an end drop. */
+.tab.drop-before { box-shadow: inset 2px 0 0 var(--live); }
+.tab.drop-after  { box-shadow: inset -2px 0 0 var(--live); }
+
 /* ---------- tab strip ---------- */
 
 .tabstrip {

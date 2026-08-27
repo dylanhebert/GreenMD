@@ -1369,6 +1369,87 @@ check("close all keeps the dirty tab open", !!tabFor(CTX_C));
 check("the dirty survivor shows the unsaved notice",
       tabFor(CTX_C)?.closest(".pane")?.querySelector(".pane-notice")?.hidden === false);
 
+// --- tab reordering along a strip ---
+// Clear the dirty leftover from the context-menu tests, then lay down three tabs.
+$$(".pane .pane-notice button").find(b => b.textContent === "Discard and close")
+  ?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+
+const RE1 = "C:" + SEP + "docs" + SEP + "reorder-1.md";
+const RE2 = "C:" + SEP + "docs" + SEP + "reorder-2.md";
+const RE3 = "C:" + SEP + "docs" + SEP + "reorder-3.md";
+send("doc-opened", doc(RE1, "reorder-1.md"));
+send("doc-opened", doc(RE2, "reorder-2.md"));
+send("doc-opened", doc(RE3, "reorder-3.md"));
+
+// jsdom lays nothing out, so each tab gets a stubbed 100px-wide box.
+function layoutStrip(strip) {
+  [...strip.querySelectorAll(".tab")].forEach((tab, i) => {
+    tab.getBoundingClientRect = () =>
+      ({ left: i * 100, width: 100, right: (i + 1) * 100, top: 0, bottom: 30, height: 30 });
+  });
+}
+const stripTabs = () => [...tabFor(RE1).closest(".tabstrip").querySelectorAll(".tab")];
+const rOrder = () => stripTabs().map(t => t.dataset.path).filter(p => [RE1, RE2, RE3].includes(p));
+
+// Drag the last tab onto the left half of the first one.
+layoutStrip(tabFor(RE1).closest(".tabstrip"));
+const r1At = stripTabs().findIndex(t => t.dataset.path === RE1);
+tabFor(RE3).dispatchEvent(dragEvent("dragstart", { setData: () => {}, effectAllowed: "" }));
+const overFront = dragEvent("dragover", { types: ["text/plain"], dropEffect: "" });
+overFront.clientX = r1At * 100 + 10;
+tabFor(RE1).dispatchEvent(overFront);
+check("dragging along the strip marks the insertion point",
+      tabFor(RE1).classList.contains("drop-before"));
+check("a strip drag paints no pane split hints", $$(".pane[class*=drop-]").length === 0);
+
+const dropFront = dragEvent("drop", { types: ["text/plain"] });
+dropFront.clientX = r1At * 100 + 10;
+tabFor(RE1).dispatchEvent(dropFront);
+check("the dropped tab lands ahead of the one under the pointer",
+      JSON.stringify(rOrder()) === JSON.stringify([RE3, RE1, RE2]), rOrder().join(" | "));
+check("no insertion marks survive the drop", $$(".drop-before, .drop-after").length === 0);
+
+// Drag it back out past the end of the strip.
+layoutStrip(tabFor(RE1).closest(".tabstrip"));
+tabFor(RE3).dispatchEvent(dragEvent("dragstart", { setData: () => {}, effectAllowed: "" }));
+const overEnd = dragEvent("dragover", { types: ["text/plain"], dropEffect: "" });
+overEnd.clientX = 100000;
+tabFor(RE2).dispatchEvent(overEnd);
+check("an end drop marks after the last tab",
+      stripTabs().at(-1).classList.contains("drop-after"));
+
+const dropEnd = dragEvent("drop", { types: ["text/plain"] });
+dropEnd.clientX = 100000;
+tabFor(RE2).dispatchEvent(dropEnd);
+check("an end drop puts the tab last",
+      JSON.stringify(rOrder()) === JSON.stringify([RE1, RE2, RE3]), rOrder().join(" | "));
+
+// Dropping on another pane's strip inserts at the pointer there too.
+window.eval(`
+  (function(){
+    var pane = Layout.activePane();
+    var created = Layout.split(pane.id, "row");
+    if (created && pane.active) Layout.addTab(created.id, pane.active);
+    Layout.render();
+  })();
+`);
+const newPaneEl = $$(".pane").find(p => p.querySelectorAll(".tab").length === 1);
+layoutStrip(newPaneEl.querySelector(".tabstrip"));
+tabFor(RE2).dispatchEvent(dragEvent("dragstart", { setData: () => {}, effectAllowed: "" }));
+const overCross = dragEvent("dragover", { types: ["text/plain"], dropEffect: "" });
+overCross.clientX = 10;
+newPaneEl.querySelector(".tab").dispatchEvent(overCross);
+check("a cross-pane strip drag marks the insertion point",
+      newPaneEl.querySelector(".tab").classList.contains("drop-before"));
+
+const dropCross = dragEvent("drop", { types: ["text/plain"] });
+dropCross.clientX = 10;
+newPaneEl.querySelector(".tab").dispatchEvent(dropCross);
+const crossOrders = $$(".pane").map(p => [...p.querySelectorAll(".tab")].map(t => t.dataset.path));
+check("a cross-pane strip drop inserts at the pointer",
+      crossOrders.some(o => JSON.stringify(o) === JSON.stringify([RE2, RE3])),
+      JSON.stringify(crossOrders));
+
 // --- report ---
 console.log("");
 for (const r of results) {

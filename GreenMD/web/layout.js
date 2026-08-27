@@ -80,11 +80,14 @@ window.Layout = (() => {
 
   // ---------- mutation ----------
 
-  function addTab(paneId, path, { activate = true } = {}) {
+  function addTab(paneId, path, { activate = true, index = null } = {}) {
     const target = pane(paneId) || activePane();
     if (!target) return null;
 
-    if (!target.tabs.includes(path)) target.tabs.push(path);
+    if (!target.tabs.includes(path)) {
+      if (index === null) target.tabs.push(path);
+      else target.tabs.splice(Math.max(0, Math.min(index, target.tabs.length)), 0, path);
+    }
     if (activate) { target.active = path; activeId = target.id; }
     return target;
   }
@@ -153,9 +156,21 @@ window.Layout = (() => {
     return created;
   }
 
-  /** Moves a tab between panes, collapsing the source if it empties. */
-  function moveTab(fromPaneId, path, toPaneId) {
+  /**
+   * Moves a tab between panes, collapsing the source if it empties. An insertion
+   * index places the tab within the target strip; without one it goes to the end.
+   */
+  function moveTab(fromPaneId, path, toPaneId, index = null) {
     if (fromPaneId === toPaneId) {
+      const target = pane(toPaneId);
+      const oldIndex = target ? target.tabs.indexOf(path) : -1;
+
+      if (oldIndex >= 0 && index !== null) {
+        // Taking the tab out first shifts everything after its old slot left one.
+        target.tabs.splice(oldIndex, 1);
+        const at = Math.min(index > oldIndex ? index - 1 : index, target.tabs.length);
+        target.tabs.splice(Math.max(0, at), 0, path);
+      }
       addTab(toPaneId, path);
       return;
     }
@@ -163,7 +178,7 @@ window.Layout = (() => {
     const from = pane(fromPaneId);
     const anchor = from ? from.anchors[path] : null;
 
-    addTab(toPaneId, path);
+    addTab(toPaneId, path, { index });
 
     const to = pane(toPaneId);
     if (to && anchor) to.anchors[path] = anchor;

@@ -851,6 +851,26 @@ function clearDropHints() {
   for (const pane of panesEl.querySelectorAll(".pane")) {
     pane.classList.remove("drop-center", "drop-left", "drop-right", "drop-top", "drop-bottom");
   }
+  for (const marked of panesEl.querySelectorAll(".drop-before, .drop-after")) {
+    marked.classList.remove("drop-before", "drop-after");
+  }
+}
+
+/** Where along a strip the drag would land: the first tab whose midpoint is past it. */
+function stripInsertionIndex(strip, event) {
+  const tabs = [...strip.querySelectorAll(".tab")];
+  for (let i = 0; i < tabs.length; i++) {
+    const rect = tabs[i].getBoundingClientRect();
+    if (event.clientX < rect.left + rect.width / 2) return i;
+  }
+  return tabs.length;
+}
+
+function markStripInsertion(strip, index) {
+  const tabs = [...strip.querySelectorAll(".tab")];
+  if (tabs.length === 0) return;
+  if (index < tabs.length) tabs[index].classList.add("drop-before");
+  else tabs[tabs.length - 1].classList.add("drop-after");
 }
 
 panesEl.addEventListener("dragover", (event) => {
@@ -861,10 +881,16 @@ panesEl.addEventListener("dragover", (event) => {
 
   event.preventDefault();
   event.dataTransfer.dropEffect = "move";
-
-  const zone = Layout.dropZone(paneEl, event);
   clearDropHints();
-  paneEl.classList.add("drop-" + zone);
+
+  // Over the strip the drag is an insertion, not a pane split or move.
+  const strip = event.target.closest(".tabstrip");
+  if (strip) {
+    markStripInsertion(strip, stripInsertionIndex(strip, event));
+    return;
+  }
+
+  paneEl.classList.add("drop-" + Layout.dropZone(paneEl, event));
 });
 
 panesEl.addEventListener("dragleave", (event) => {
@@ -879,9 +905,21 @@ panesEl.addEventListener("drop", (event) => {
 
   event.preventDefault();
 
-  const zone = Layout.dropZone(paneEl, event);
   const { paneId, path } = dragging;
   dragging = null;
+
+  const strip = event.target.closest(".tabstrip");
+  if (strip) {
+    const index = stripInsertionIndex(strip, event);
+    clearDropHints();
+    rememberAnchors();
+    Layout.moveTab(paneId, path, paneEl.dataset.paneId, index);
+    renderAll({ keepAnchors: false });
+    syncOpenPaths();
+    return;
+  }
+
+  const zone = Layout.dropZone(paneEl, event);
   clearDropHints();
 
   // Dropping a pane's only tab back onto itself is a no-op, not a split.
