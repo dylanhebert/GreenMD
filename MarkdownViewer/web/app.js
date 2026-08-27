@@ -10,7 +10,6 @@ const assocButtonEl = document.getElementById("assocButton");
 const outlineEl = document.getElementById("outline");
 const outlineTitleEl = document.getElementById("outlineTitle");
 const openFolderEl = document.getElementById("openFolder");
-const closeWorkspaceEl = document.getElementById("closeWorkspace");
 const findBarEl = document.getElementById("findBar");
 const findInputEl = document.getElementById("findInput");
 const findCountEl = document.getElementById("findCount");
@@ -806,6 +805,8 @@ function restoreSession(state) {
   }
   if (Array.isArray(state.recents)) recents = state.recents.slice(0, RECENT_LIMIT);
   if (Array.isArray(state.expanded)) Workspace.setExpanded(state.expanded);
+  if (Array.isArray(state.collapsedRoots)) Workspace.setCollapsedRoots(state.collapsedRoots);
+  if (state.sectionWeights) Workspace.setSectionWeights(state.sectionWeights);
 
   // Reading the panel state is not enough; it has to be applied.
   applyPanels();
@@ -825,8 +826,10 @@ function saveSession() {
   clearTimeout(sessionTimer);
   sessionTimer = setTimeout(() => {
     post("save-session", {
-      workspace: Workspace.root(),
+      workspaces: Workspace.roots(),
       expanded: Workspace.expandedPaths(),
+      collapsedRoots: Workspace.collapsedRoots(),
+      sectionWeights: Workspace.sectionWeights(),
       panels: { ...panels },
       recents,
       layout: Layout.serialize()
@@ -1122,12 +1125,6 @@ toggleOutlineEl.addEventListener("click", () => togglePanel("outline"));
 
 openFolderEl.addEventListener("click", () => post("pick-folder"));
 
-closeWorkspaceEl.addEventListener("click", () => {
-  post("close-workspace");
-  Workspace.set(null);
-  saveSession();
-});
-
 assocButtonEl.addEventListener("click", () => {
   post("register-association");
   statusTextEl.textContent =
@@ -1154,6 +1151,7 @@ Zoom.configure({
 Workspace.configure({
   onOpenFile(path) { post("open-file", path); },
   onChanged() { saveSession(); },
+  onCloseFolder(root) { post("close-workspace", root); },
   onNoWorkspace() { statusTextEl.textContent = "Nothing recent yet — open a folder with Ctrl+K"; }
 });
 
@@ -1217,7 +1215,7 @@ function measureLayout() {
       bodyElHeight: getComputedStyle(document.body).height
     },
     boxes: {
-      shell: box(shell), body: box(body), panes: box(panes),
+      shell: box(shell), body: box(body), sidebar: box(sidebar), panes: box(panes),
       outlineAside: box(aside), status: box(status), pane: box(pane), doc: box(doc)
     },
     verdict: {
@@ -1230,8 +1228,13 @@ function measureLayout() {
       // The checks that were missing: the previous verdict passed while the outline
       // sat entirely off the right-hand edge.
       outlineOnScreen: aside ? box(aside).x + box(aside).w <= window.innerWidth + 1 : null,
-      childrenTileBody: (panes && aside && body)
-        ? Math.abs((box(panes).w + box(aside).w) - box(body).w) <= 2 : null
+      // Sums every visible child rather than a hardcoded pair; this assertion was
+      // written before the sidebar existed and quietly stopped covering the truth.
+      childrenTileBody: body
+        ? Math.abs([...body.children]
+            .filter(c => !c.hidden)
+            .reduce((sum, c) => sum + box(c).w, 0) - box(body).w) <= 2
+        : null
     },
     outline: {
       count: links.length,

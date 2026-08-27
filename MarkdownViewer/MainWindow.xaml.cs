@@ -144,8 +144,10 @@ public partial class MainWindow : Window
                 break;
 
             case "close-workspace":
-                _workspace.Close();
-                Post("workspace", new { closed = true });
+                // A path closes one folder; anything else closes them all.
+                if (payload.ValueKind == JsonValueKind.String) _workspace.Remove(payload.GetString()!);
+                else _workspace.Clear();
+                PostWorkspaceTree();
                 break;
 
             case "get-text":
@@ -195,15 +197,7 @@ public partial class MainWindow : Window
 
         if (saved is not null)
         {
-            if (saved.Value.TryGetProperty("workspace", out var workspaceRoot)
-                && workspaceRoot.GetString() is { Length: > 0 } root
-                && Directory.Exists(root))
-            {
-                _workspace.Open(root);
-                _assets.AllowRoot(root);
-                PostWorkspaceTree();
-            }
-
+            RestoreWorkspaces(saved.Value);
             Post("session", saved.Value);
         }
 
@@ -426,17 +420,15 @@ public partial class MainWindow : Window
     {
         if (!Directory.Exists(root)) return;
 
-        _workspace.Open(root);
+        _workspace.Add(root);
         _assets.AllowRoot(root);
         PostWorkspaceTree();
     }
 
-    private void PostWorkspaceTree()
+    /// <summary>Sends every open folder in one message; the UI renders one section each.</summary>
+    private void PostWorkspaceTree() => Post("workspace", new
     {
-        var tree = _workspace.Scan();
-        if (tree is null) { Post("workspace", new { closed = true }); return; }
-
-        Post("workspace", new
+        workspaces = _workspace.ScanAll().Select(tree => new
         {
             root = tree.Root,
             name = tree.Name,
@@ -448,7 +440,41 @@ public partial class MainWindow : Window
                 parent = entry.Parent,
                 dir = entry.IsDirectory
             })
-        });
+        })
+    });
+
+    /// <summary>
+    /// Reopens the saved folders. The single-string "workspace" key from before
+    /// multi-folder support is still read, so an existing session is not lost.
+    /// </summary>
+    private void RestoreWorkspaces(JsonElement saved)
+    {
+        List<string> roots = [];
+
+        if (saved.TryGetProperty("workspaces", out var list) && list.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var element in list.EnumerateArray())
+            {
+                if (element.GetString() is { Length: > 0 } root) roots.Add(root);
+            }
+        }
+        else if (saved.TryGetProperty("workspace", out var single)
+                 && single.GetString() is { Length: > 0 } legacy)
+        {
+            roots.Add(legacy);
+        }
+
+        var opened = false;
+        foreach (var root in roots)
+        {
+            if (!Directory.Exists(root)) continue;
+            if (!_workspace.Add(root)) continue;
+
+            _assets.AllowRoot(root);
+            opened = true;
+        }
+
+        if (opened) PostWorkspaceTree();
     }
 
     private void OnWorkspaceTreeChanged() =>

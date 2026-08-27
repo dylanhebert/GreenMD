@@ -215,7 +215,7 @@ const SEP = String.fromCharCode(92);
 const ROOT = "C:" + SEP + "proj";
 const API = ROOT + SEP + "api";
 
-send("workspace", {
+send("workspace", { workspaces: [{
   root: ROOT, name: "proj", truncated: false,
   entries: [
     { path: ROOT + SEP + "guide.md",  name: "guide.md",  parent: ROOT, dir: false },
@@ -223,26 +223,26 @@ send("workspace", {
     { path: API + SEP + "config.md",  name: "config.md", parent: API,  dir: false },
     { path: API + SEP + "auth.md",    name: "auth.md",   parent: API,  dir: false }
   ]
-});
+}] });
 
 check("sidebar shown when a workspace opens", $("#sidebar").hidden === false);
-check("workspace name displayed", $("#workspaceName")?.textContent === "proj");
-check("root files listed", $$("#tree .tree-file").length >= 1, `${$$("#tree .tree-file").length}`);
-check("subfolder listed", $$("#tree .tree-dir").length === 1);
-check("subfolder auto-expanded", $$("#tree .tree-file").length === 3,
-      `${$$("#tree .tree-file").length} files visible`);
+check("workspace name displayed", $(".ws-name")?.textContent === "proj");
+check("root files listed", $$(".ws-section .tree-file").length >= 1, `${$$(".ws-section .tree-file").length}`);
+check("subfolder listed", $$(".ws-section .tree-dir").length === 1);
+check("subfolder auto-expanded", $$(".ws-section .tree-file").length === 3,
+      `${$$(".ws-section .tree-file").length} files visible`);
 check("nested files indented deeper",
-      parseFloat($$("#tree .tree-file")[2].style.paddingLeft) > parseFloat($$("#tree .tree-file")[0].style.paddingLeft));
+      parseFloat($$(".ws-section .tree-file")[2].style.paddingLeft) > parseFloat($$(".ws-section .tree-file")[0].style.paddingLeft));
 
 // collapsing a directory hides its children
-$$("#tree .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-check("collapsing a folder hides its files", $$("#tree .tree-file").length === 1,
-      `${$$("#tree .tree-file").length} visible`);
-$$("#tree .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+$$(".ws-section .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("collapsing a folder hides its files", $$(".ws-section .tree-file").length === 1,
+      `${$$(".ws-section .tree-file").length} visible`);
+$$(".ws-section .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 
 // clicking a file asks the host to open it
 const beforeOpen = posted.filter(m => m.type === "open-file").length;
-$$("#tree .tree-file")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+$$(".ws-section .tree-file")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 check("clicking a tree file requests open",
       posted.filter(m => m.type === "open-file").length === beforeOpen + 1);
 
@@ -277,7 +277,9 @@ check("quick open closes", $("#quickOpen").hidden === true);
 await new Promise(r => setTimeout(r, 600));
 const saved = posted.filter(m => m.type === "save-session").pop();
 check("session was saved", !!saved);
-check("session records the workspace", saved?.payload?.workspace === ROOT, saved?.payload?.workspace);
+check("session records the open folders",
+      Array.isArray(saved?.payload?.workspaces) && saved.payload.workspaces.includes(ROOT),
+      JSON.stringify(saved?.payload?.workspaces));
 check("session records the layout", !!saved?.payload?.layout);
 check("session records expanded folders", Array.isArray(saved?.payload?.expanded));
 
@@ -310,7 +312,7 @@ check("doc-content painted the restored pane",
       $$(".pane .doc h1").some(h => h.textContent === "Gamma"));
 
 // --- recent files feed quick-open when there is no workspace ---
-send("workspace", { closed: true });
+send("workspace", { workspaces: [] });
 check("sidebar hides when the workspace closes", $("#sidebar").hidden === true);
 
 window.eval("Workspace.openQuick(['C:" + SEP + SEP + "docs" + SEP + SEP + "alpha.md'])");
@@ -584,25 +586,25 @@ send("doc-opened", {
   missing: false, loadedAt: new Date().toISOString()
 });
 
-send("workspace", {
+send("workspace", { workspaces: [{
   root: TROOT, name: "wsmark", truncated: false,
   entries: [
     { path: TROOT + SEP + "top.md", name: "top.md", parent: TROOT, dir: false },
     { path: TSUB, name: "deep", parent: TROOT, dir: true },
     { path: TFILE, name: "nested.md", parent: TSUB, dir: false }
   ]
-});
+}] });
 
-const marked = () => $$("#tree .tree-file.current").map(r => r.dataset.path);
+const marked = () => $$(".ws-section .tree-file.current").map(r => r.dataset.path);
 
 check("active file is marked when the tree loads",
       marked().length === 1 && marked()[0] === TFILE, marked().join(","));
 check("its folder was expanded so the row is visible",
-      !!$(`#tree .tree-file[data-path="${window.CSS.escape(TFILE)}"]`));
+      !!$(`.ws-section .tree-file[data-path="${window.CSS.escape(TFILE)}"]`));
 
 // Expanding or collapsing a folder rebuilds the tree.
-$$("#tree .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-$$("#tree .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+$$(".ws-section .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+$$(".ws-section .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 check("marker survives a folder toggle",
       marked().length === 1 && marked()[0] === TFILE, marked().join(","));
 
@@ -621,7 +623,83 @@ send("doc-opened", {
 check("marker follows the active document",
       marked().length === 1 && marked()[0] === TROOT + SEP + "top.md", marked().join(","));
 
-send("workspace", { closed: true });
+send("workspace", { workspaces: [] });
+
+// --- multiple folders ---
+const R1 = "C:" + SEP + "alpha";
+const R2 = "C:" + SEP + "beta";
+
+send("workspace", { workspaces: [
+  { root: R1, name: "alpha", truncated: false, entries: [
+    { path: R1 + SEP + "a1.md", name: "a1.md", parent: R1, dir: false },
+    { path: R1 + SEP + "a2.md", name: "a2.md", parent: R1, dir: false }
+  ]},
+  { root: R2, name: "beta", truncated: false, entries: [
+    { path: R2 + SEP + "b1.md", name: "b1.md", parent: R2, dir: false }
+  ]}
+]});
+
+check("one section per folder", $$(".ws-section").length === 2,
+      `${$$(".ws-section").length} sections`);
+check("a divider sits between them", $$(".ws-divider").length === 1);
+check("sections are named", $$(".ws-name").map(n => n.textContent).join(",") === "alpha,beta",
+      $$(".ws-name").map(n => n.textContent).join(","));
+check("each section shows its file count",
+      $$(".ws-count").map(c => c.textContent).join(",") === "2,1",
+      $$(".ws-count").map(c => c.textContent).join(","));
+check("files from both folders are listed", $$(".ws-section .tree-file").length === 3,
+      `${$$(".ws-section .tree-file").length}`);
+check("sections start with equal weight",
+      $$(".ws-section").every(sec => sec.style.flex.startsWith("1 1")),
+      $$(".ws-section").map(sec => sec.style.flex).join(" | "));
+
+// Collapsing a section drops it to header height and gives up its share.
+$$(".ws-header")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("collapsing a section hides its tree",
+      $$(".ws-section")[0].querySelector(".tree") === null);
+check("a collapsed section claims no space",
+      $$(".ws-section")[0].style.flex === "0 0 auto",
+      $$(".ws-section")[0].style.flex);
+check("the other folder still lists its files",
+      $$(".ws-section .tree-file").length === 1);
+$$(".ws-header")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+
+// Quick open spans every folder and disambiguates by folder name.
+window.eval("Workspace.openQuick()");
+check("quick open spans both folders", $$("#quickList .quick-row").length === 3,
+      `${$$("#quickList .quick-row").length}`);
+$("#quickInput").value = "beta";
+$("#quickInput").dispatchEvent(new window.Event("input", { bubbles: true }));
+check("quick open can be narrowed to one folder",
+      $("#quickList .quick-name")?.textContent === "b1.md",
+      $("#quickList .quick-name")?.textContent);
+window.eval("Workspace.closeQuick()");
+
+// Closing one folder asks the host to drop just that root.
+const beforeClose = posted.filter(m => m.type === "close-workspace").length;
+$$(".ws-header")[1].querySelector("[data-close-root]")
+  .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+const closeMsg = posted.filter(m => m.type === "close-workspace").pop();
+check("closing a section targets one folder",
+      posted.filter(m => m.type === "close-workspace").length === beforeClose + 1
+      && closeMsg?.payload === R2, JSON.stringify(closeMsg?.payload));
+
+// Section weights and collapsed roots round-trip.
+// Passed through a property rather than interpolated into a string: a Windows path
+// inside eval'd source needs escaping, and that has gone wrong more than once here.
+window.__testRoot = R1;
+window.eval("Workspace.setSectionWeights({ [window.__testRoot]: 3 })");
+await new Promise(r => setTimeout(r, 600));
+const wsSave = posted.filter(m => m.type === "save-session").pop();
+check("section weights are persisted",
+      wsSave?.payload?.sectionWeights && Object.keys(wsSave.payload.sectionWeights).length > 0,
+      JSON.stringify(wsSave?.payload?.sectionWeights));
+check("open folders are persisted as a list",
+      Array.isArray(wsSave?.payload?.workspaces),
+      JSON.stringify(wsSave?.payload?.workspaces));
+
+send("workspace", { workspaces: [] });
+check("no sections when every folder is closed", $$(".ws-section").length === 0);
 
 // --- side panel toggles ---
 check("outline panel starts visible", $(".pane-outline").hidden === false);

@@ -12,13 +12,14 @@ public sealed record WorkspaceTree(
     bool Truncated);
 
 /// <summary>
-/// A workspace is a folder. Bind one and the markdown files inside it are listed,
-/// including files that appear later — the folder is already being watched, so
-/// discovery costs nothing extra.
+/// Workspaces are folders, and there can be several open at once. Each gets its own
+/// recursive watcher so files appearing later show up on their own; the entry cap is
+/// shared across all of them, because the thing worth bounding is the total the UI has
+/// to render, not the depth of any single folder.
 /// </summary>
 public sealed class WorkspaceService : IDisposable
 {
-    private const int MaxEntries = 5000;
+    private const int MaxEntriesTotal = 5000;
     private const int RescanDebounceMs = 400;
 
     private static readonly string[] Ignored =
@@ -27,28 +28,44 @@ public sealed class WorkspaceService : IDisposable
     private static readonly string[] MarkdownExtensions =
         [".md", ".markdown", ".mdown", ".mkd", ".mdtext"];
 
-    private FileSystemWatcher? _watcher;
-    private Timer? _rescan;
-    private readonly Lock _gate = new();
+    private sealed class Root
+    {
+        public required FileSystemWatcher Watcher { get; init; }
+    }
 
-    public string? Root { get; private set; }
+    private readonly Dictionary<string, Root> _roots = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Lock _gate = new();
+    private Timer? _rescan;
 
     /// <summary>Raised on a background thread when files or folders appear or vanish.</summary>
     public event Action? TreeChanged;
 
-    public void Open(string root)
+    public IReadOnlyList<string> Roots
     {
-        var full = Path.GetFullPath(root);
-        if (!Directory.Exists(full)) return;
+        get { lock (_gate) return _roots.Keys.ToArray(); }
+    }
+
+    public bool Add(string root)
+    {
+        string full;
+        try { full = Path.GetFullPath(root); }
+        catch (ArgumentException) { return false; }
+        catch (NotSupportedException) { return false; }
+        catch (PathTooLongException) { return false; }
+
+        if (!Directory.Exists(full)) return false;
 
         lock (_gate)
         {
-            DisposeWatcher();
-            Root = full;
+            if (_roots.ContainsKey(full)) return false;
 
-            // One recursive watcher for the whole tree rather than one per directory.
-            // It also picks up folders created after the workspace was opened.
-            _watcher = new FileSystemWatcher(full)
+            // Adding a folder already covered by an open one would list everything twice.
+            foreach (var existing in _roots.Keys)
+            {
+                if (IsUnder(full, existing) || IsUnder(existing, full)) return false;
+            }
+
+            var watcher = new FileSystemWatcher(full)
             {
                 // Content changes are handled per open document by FileWatchService.
                 // This one only cares about the shape of the tree.
@@ -57,50 +74,77 @@ public sealed class WorkspaceService : IDisposable
                 InternalBufferSize = 64 * 1024
             };
 
-            _watcher.Created += (_, _) => ScheduleRescan();
-            _watcher.Deleted += (_, _) => ScheduleRescan();
-            _watcher.Renamed += (_, _) => ScheduleRescan();
-            _watcher.Error += (_, _) => ScheduleRescan();
+            watcher.Created += (_, _) => ScheduleRescan();
+            watcher.Deleted += (_, _) => ScheduleRescan();
+            watcher.Renamed += (_, _) => ScheduleRescan();
+            watcher.Error += (_, _) => ScheduleRescan();
+            watcher.EnableRaisingEvents = true;
 
-            _watcher.EnableRaisingEvents = true;
+            _roots[full] = new Root { Watcher = watcher };
+            return true;
         }
     }
 
-    public void Close()
+    public void Remove(string root)
     {
         lock (_gate)
         {
-            DisposeWatcher();
-            Root = null;
+            if (!_roots.Remove(Normalize(root), out var entry)) return;
+            entry.Watcher.EnableRaisingEvents = false;
+            entry.Watcher.Dispose();
+        }
+    }
+
+    public void Clear()
+    {
+        lock (_gate)
+        {
+            foreach (var entry in _roots.Values)
+            {
+                entry.Watcher.EnableRaisingEvents = false;
+                entry.Watcher.Dispose();
+            }
+            _roots.Clear();
         }
     }
 
     /// <summary>
-    /// Walks the tree. Enumeration only — file contents are never read, which matters
-    /// on OneDrive where reading a placeholder triggers a download.
+    /// Walks every open folder. Enumeration only — file contents are never read, which
+    /// matters on OneDrive where reading a placeholder triggers a download.
     /// </summary>
-    public WorkspaceTree? Scan()
+    public IReadOnlyList<WorkspaceTree> ScanAll()
     {
-        var root = Root;
-        if (root is null || !Directory.Exists(root)) return null;
+        var roots = Roots;
+        var trees = new List<WorkspaceTree>(roots.Count);
+        var budget = MaxEntriesTotal;
 
-        var entries = new List<TreeEntry>();
-        var truncated = Walk(root, root, entries);
-
-        entries.Sort((a, b) =>
+        foreach (var root in roots)
         {
-            if (a.Parent != b.Parent) return string.Compare(a.Parent, b.Parent, StringComparison.OrdinalIgnoreCase);
-            if (a.IsDirectory != b.IsDirectory) return a.IsDirectory ? -1 : 1;
-            return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
-        });
+            if (!Directory.Exists(root)) continue;
 
-        return new WorkspaceTree(root, new DirectoryInfo(root).Name, entries, truncated);
+            var entries = new List<TreeEntry>();
+            var truncated = Walk(root, root, entries, ref budget);
+
+            entries.Sort(CompareEntries);
+            trees.Add(new WorkspaceTree(root, new DirectoryInfo(root).Name, entries, truncated));
+        }
+
+        // Stable, predictable order in the sidebar.
+        trees.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+        return trees;
     }
 
-    /// <summary>Returns true if the scan hit the entry cap.</summary>
-    private static bool Walk(string directory, string parent, List<TreeEntry> entries)
+    private static int CompareEntries(TreeEntry a, TreeEntry b)
     {
-        if (entries.Count >= MaxEntries) return true;
+        if (a.Parent != b.Parent) return string.Compare(a.Parent, b.Parent, StringComparison.OrdinalIgnoreCase);
+        if (a.IsDirectory != b.IsDirectory) return a.IsDirectory ? -1 : 1;
+        return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Returns true if the scan hit the shared entry cap.</summary>
+    private static bool Walk(string directory, string parent, List<TreeEntry> entries, ref int budget)
+    {
+        if (budget <= 0) return true;
 
         string[] subdirectories;
         string[] files;
@@ -123,13 +167,15 @@ public sealed class WorkspaceService : IDisposable
 
             var before = entries.Count;
             entries.Add(new TreeEntry(subdirectory, name, parent, true));
+            budget--;
 
-            truncated |= Walk(subdirectory, subdirectory, entries);
+            truncated |= Walk(subdirectory, subdirectory, entries, ref budget);
 
             // Prune folders that turned out to hold no markdown at all -- otherwise the
             // tree is mostly empty scaffolding.
             if (!entries.Skip(before + 1).Any(e => !e.IsDirectory))
             {
+                budget += entries.Count - before;
                 entries.RemoveRange(before, entries.Count - before);
             }
         }
@@ -137,12 +183,31 @@ public sealed class WorkspaceService : IDisposable
         foreach (var file in files)
         {
             if (!MarkdownExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase)) continue;
+            if (budget <= 0) return true;
 
-            if (entries.Count >= MaxEntries) return true;
             entries.Add(new TreeEntry(file, Path.GetFileName(file), parent, false));
+            budget--;
         }
 
         return truncated;
+    }
+
+    private static string Normalize(string path)
+    {
+        try { return Path.GetFullPath(path); }
+        catch (ArgumentException) { return path; }
+        catch (NotSupportedException) { return path; }
+        catch (PathTooLongException) { return path; }
+    }
+
+    private static bool IsUnder(string candidate, string root)
+    {
+        var trimmed = root.TrimEnd(Path.DirectorySeparatorChar);
+        if (!candidate.StartsWith(trimmed, StringComparison.OrdinalIgnoreCase)) return false;
+        if (candidate.Length == trimmed.Length) return true;
+
+        return candidate[trimmed.Length] == Path.DirectorySeparatorChar
+               || candidate[trimmed.Length] == Path.AltDirectorySeparatorChar;
     }
 
     private void ScheduleRescan()
@@ -167,21 +232,14 @@ public sealed class WorkspaceService : IDisposable
         }
     }
 
-    private void DisposeWatcher()
-    {
-        if (_watcher is not null)
-        {
-            _watcher.EnableRaisingEvents = false;
-            _watcher.Dispose();
-            _watcher = null;
-        }
-
-        _rescan?.Dispose();
-        _rescan = null;
-    }
-
     public void Dispose()
     {
-        lock (_gate) DisposeWatcher();
+        Clear();
+
+        lock (_gate)
+        {
+            _rescan?.Dispose();
+            _rescan = null;
+        }
     }
 }

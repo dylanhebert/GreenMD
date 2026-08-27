@@ -3,43 +3,58 @@
 /**
  * The workspace sidebar and quick-open.
  *
- * A workspace is a folder. The host sends a flat list of entries with parent
- * references and this builds the tree from it — flat is easier to diff and to
- * serialise than a nested structure, and the tree is rebuilt from scratch on every
- * change anyway (53 files rebuild in well under a frame).
+ * A workspace is a folder, and several can be open at once. Each becomes a stacked
+ * section with its own scrolling tree, and the dividers between them redistribute
+ * vertical space. Sections keep a minimum height, so with enough folders open the
+ * sidebar itself scrolls rather than squeezing every tree down to nothing.
+ *
+ * The host sends a flat entry list per folder and this builds the trees from it: flat
+ * is easier to diff and to serialise than a nested structure, and the trees are
+ * rebuilt from scratch on every change anyway.
  */
 window.Workspace = (() => {
 
-  let data = null;
+  const MIN_SECTION_PX = 90;
+
+  /** [{ root, name, truncated, entries }] */
+  let workspaces = [];
+
+  /** Absolute paths of expanded folders, across every workspace. */
   let expanded = new Set();
-  let hooks = {};
+
+  /** Roots whose whole section is collapsed to its header. */
+  let collapsed = new Set();
+
+  /** root -> flex weight. Relative, so a split survives a window resize. */
+  let weights = new Map();
+
   let visible = true;
 
-  /** The file the active pane is showing. Owned here so a tree rebuild cannot lose it. */
+  /** The file the active pane is showing. Owned here so a rebuild cannot lose it. */
   let currentPath = null;
 
-  let treeEl = null;
-  let nameEl = null;
+  let hooks = {};
+
   let sidebarEl = null;
+  let sectionsEl = null;
   let quickEl = null;
   let quickInputEl = null;
   let quickListEl = null;
 
   let quickMatches = [];
   let quickIndex = 0;
-  let quickSource = null;   // null = the workspace; otherwise an explicit file list
+  let quickSource = null;   // null = the open workspaces; otherwise an explicit list
 
   function configure(next) {
     hooks = next || {};
 
     sidebarEl = document.getElementById("sidebar");
-    treeEl = document.getElementById("tree");
-    nameEl = document.getElementById("workspaceName");
+    sectionsEl = document.getElementById("workspaceSections");
     quickEl = document.getElementById("quickOpen");
     quickInputEl = document.getElementById("quickInput");
     quickListEl = document.getElementById("quickList");
 
-    treeEl.addEventListener("click", onTreeClick);
+    sectionsEl.addEventListener("click", onSectionClick);
     quickInputEl.addEventListener("input", () => { quickIndex = 0; renderQuick(); });
     quickInputEl.addEventListener("keydown", onQuickKey);
     quickListEl.addEventListener("click", onQuickClick);
@@ -48,102 +63,137 @@ window.Workspace = (() => {
 
   // ---------- state ----------
 
-  function set(next) {
-    data = next && !next.closed ? next : null;
+  function set(payload) {
+    workspaces = payload && Array.isArray(payload.workspaces) ? payload.workspaces : [];
 
-    if (data) {
-      // Expand the root's immediate children by default so the sidebar is not a
-      // single collapsed row on first open.
-      if (expanded.size === 0) {
-        for (const entry of data.entries) {
-          if (entry.dir && entry.parent === data.root) expanded.add(entry.path);
+    const open = new Set(workspaces.map(w => w.root));
+
+    // Forget state for folders that are no longer open.
+    for (const root of [...collapsed]) if (!open.has(root)) collapsed.delete(root);
+    for (const root of [...weights.keys()]) if (!open.has(root)) weights.delete(root);
+
+    for (const workspace of workspaces) {
+      if (!weights.has(workspace.root)) weights.set(workspace.root, 1);
+
+      // Expand a newly opened folder's immediate children so it is not a single row.
+      const alreadyKnown = workspace.entries.some(e => e.dir && expanded.has(e.path));
+      if (!alreadyKnown) {
+        for (const entry of workspace.entries) {
+          if (entry.dir && entry.parent === workspace.root) expanded.add(entry.path);
         }
       }
-    } else {
-      expanded = new Set();
     }
 
     render();
   }
 
-  function root() { return data ? data.root : null; }
-
+  function roots() { return workspaces.map(w => w.root); }
+  function hasWorkspace() { return workspaces.length > 0; }
   function setVisible(next) { visible = !!next; render(); }
   function isVisible() { return visible; }
-  function hasWorkspace() { return !!data; }
 
   function expandedPaths() { return [...expanded]; }
+  function setExpanded(paths) { expanded = new Set(paths || []); }
 
-  function setExpanded(paths) {
-    expanded = new Set(paths || []);
+  function collapsedRoots() { return [...collapsed]; }
+  function setCollapsedRoots(list) { collapsed = new Set(list || []); }
+
+  function sectionWeights() { return Object.fromEntries(weights); }
+  function setSectionWeights(map) {
+    weights = new Map();
+    for (const [root, weight] of Object.entries(map || {})) {
+      if (typeof weight === "number" && weight > 0) weights.set(root, weight);
+    }
   }
 
+  /** Every markdown file across every open folder. */
   function files() {
-    return data ? data.entries.filter(e => !e.dir) : [];
+    return workspaces.flatMap(w => w.entries.filter(e => !e.dir).map(e => ({ ...e, root: w.root })));
   }
 
-  // ---------- tree ----------
-
-  function childrenOf(parent) {
-    return data ? data.entries.filter(e => e.parent === parent) : [];
-  }
+  // ---------- rendering ----------
 
   function render() {
     if (!sidebarEl) return;
 
-    // Hidden when there is no workspace, or when the user has collapsed the panel.
-    sidebarEl.hidden = !data || !visible;
-    if (!data) { treeEl.replaceChildren(); return; }
+    sidebarEl.hidden = workspaces.length === 0 || !visible;
+    sectionsEl.replaceChildren();
+    if (workspaces.length === 0) return;
 
-    nameEl.textContent = data.name;
-    nameEl.title = data.root;
+    workspaces.forEach((workspace, index) => {
+      if (index > 0) sectionsEl.append(buildDivider(workspaces[index - 1], workspace));
+      sectionsEl.append(buildSection(workspace));
+    });
 
-    treeEl.replaceChildren();
-    build(data.root, 0, treeEl);
+    applyWeights();
 
-    if (data.truncated) {
-      const note = document.createElement("div");
-      note.className = "tree-note";
-      note.textContent = "List truncated — folder is very large";
-      treeEl.append(note);
-    }
-
-    if (!treeEl.childElementCount) {
-      const note = document.createElement("div");
-      note.className = "tree-note";
-      note.textContent = "No markdown files here";
-      treeEl.append(note);
-    }
-
-    // render() replaces every row, so the marker has to be reapplied here rather
-    // than only when the active document changes -- otherwise expanding a folder,
-    // toggling the panel, or the workspace simply loading would clear it.
+    // render() replaces every row, so the marker is reapplied here rather than only
+    // when the active document changes.
     applyCurrent();
   }
 
-  function applyCurrent() {
-    if (!treeEl) return;
-    for (const row of treeEl.querySelectorAll(".tree-file")) {
-      row.classList.toggle("current", row.dataset.path === currentPath);
+  function buildSection(workspace) {
+    const isCollapsed = collapsed.has(workspace.root);
+
+    const section = document.createElement("section");
+    section.className = "ws-section" + (isCollapsed ? " collapsed" : "");
+    section.dataset.root = workspace.root;
+
+    const header = document.createElement("header");
+    header.className = "ws-header";
+    header.dataset.toggleRoot = workspace.root;
+    header.title = workspace.root;
+
+    const caret = document.createElement("span");
+    caret.className = "tree-caret";
+    caret.textContent = isCollapsed ? "▸" : "▾";
+
+    const name = document.createElement("span");
+    name.className = "ws-name";
+    name.textContent = workspace.name;
+
+    const count = document.createElement("span");
+    count.className = "ws-count";
+    count.textContent = String(workspace.entries.filter(e => !e.dir).length);
+
+    const close = document.createElement("button");
+    close.className = "icon-button";
+    close.type = "button";
+    close.dataset.closeRoot = workspace.root;
+    close.textContent = "×";
+    close.title = "Close this folder";
+    close.setAttribute("aria-label", "Close " + workspace.name);
+
+    header.append(caret, name, count, close);
+    section.append(header);
+
+    if (isCollapsed) return section;
+
+    const tree = document.createElement("div");
+    tree.className = "tree";
+    tree.setAttribute("data-zoom-target", "");
+    build(workspace, workspace.root, 0, tree);
+
+    if (workspace.truncated) {
+      const note = document.createElement("div");
+      note.className = "tree-note";
+      note.textContent = "List truncated — folder is very large";
+      tree.append(note);
     }
+
+    if (!tree.childElementCount) {
+      const note = document.createElement("div");
+      note.className = "tree-note";
+      note.textContent = "No markdown files here";
+      tree.append(note);
+    }
+
+    section.append(tree);
+    return section;
   }
 
-  /** Expands the folders containing a path so the row is actually reachable. */
-  function revealAncestors(path) {
-    if (!data || !path) return false;
-
-    let changed = false;
-    let entry = data.entries.find(e => e.path === path);
-
-    while (entry && entry.parent && entry.parent !== data.root) {
-      if (!expanded.has(entry.parent)) { expanded.add(entry.parent); changed = true; }
-      entry = data.entries.find(e => e.path === entry.parent);
-    }
-    return changed;
-  }
-
-  function build(parent, depth, container) {
-    for (const entry of childrenOf(parent)) {
+  function build(workspace, parent, depth, container) {
+    for (const entry of workspace.entries.filter(e => e.parent === parent)) {
       const row = document.createElement("div");
       row.className = entry.dir ? "tree-dir" : "tree-file";
       row.dataset.path = entry.path;
@@ -165,11 +215,92 @@ window.Workspace = (() => {
 
       container.append(row);
 
-      if (entry.dir && expanded.has(entry.path)) build(entry.path, depth + 1, container);
+      if (entry.dir && expanded.has(entry.path)) build(workspace, entry.path, depth + 1, container);
     }
   }
 
-  function onTreeClick(event) {
+  function buildDivider(above, below) {
+    const divider = document.createElement("div");
+    divider.className = "ws-divider";
+    divider.addEventListener("mousedown", event => beginDrag(event, above.root, below.root));
+    return divider;
+  }
+
+  function sectionElement(root) {
+    return sectionsEl.querySelector(`.ws-section[data-root="${CSS.escape(root)}"]`);
+  }
+
+  function applyWeights() {
+    for (const workspace of workspaces) {
+      const section = sectionElement(workspace.root);
+      if (!section) continue;
+
+      // A collapsed section is only its header, so it must not claim a share.
+      section.style.flex = collapsed.has(workspace.root)
+        ? "0 0 auto"
+        : `${weights.get(workspace.root) ?? 1} 1 0`;
+    }
+  }
+
+  // ---------- resizing ----------
+
+  function beginDrag(event, aboveRoot, belowRoot) {
+    event.preventDefault();
+
+    const above = sectionElement(aboveRoot);
+    const below = sectionElement(belowRoot);
+    if (!above || !below) return;
+
+    const startY = event.clientY;
+    const aboveHeight = above.getBoundingClientRect().height;
+    const total = aboveHeight + below.getBoundingClientRect().height;
+    if (total <= 0) return;
+
+    // Weights are relative, so the pair's existing share is redistributed between
+    // them rather than pixels being assigned -- that keeps the split on resize.
+    const share = (weights.get(aboveRoot) ?? 1) + (weights.get(belowRoot) ?? 1);
+
+    document.body.classList.add("resizing-row");
+
+    function onMove(moveEvent) {
+      const wanted = aboveHeight + (moveEvent.clientY - startY);
+      const clamped = Math.min(total - MIN_SECTION_PX, Math.max(MIN_SECTION_PX, wanted));
+
+      weights.set(aboveRoot, share * (clamped / total));
+      weights.set(belowRoot, share * ((total - clamped) / total));
+      applyWeights();
+    }
+
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.classList.remove("resizing-row");
+      if (hooks.onChanged) hooks.onChanged();
+    }
+
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
+  // ---------- interaction ----------
+
+  function onSectionClick(event) {
+    const close = event.target.closest("[data-close-root]");
+    if (close) {
+      event.stopPropagation();
+      if (hooks.onCloseFolder) hooks.onCloseFolder(close.dataset.closeRoot);
+      return;
+    }
+
+    const header = event.target.closest("[data-toggle-root]");
+    if (header) {
+      const root = header.dataset.toggleRoot;
+      if (collapsed.has(root)) collapsed.delete(root); else collapsed.add(root);
+      render();
+      if (hooks.onChanged) hooks.onChanged();
+      return;
+    }
+
     const row = event.target.closest("[data-path]");
     if (!row) return;
 
@@ -182,6 +313,33 @@ window.Workspace = (() => {
     }
 
     if (hooks.onOpenFile) hooks.onOpenFile(row.dataset.path);
+  }
+
+  // ---------- active file marker ----------
+
+  function applyCurrent() {
+    if (!sectionsEl) return;
+    for (const row of sectionsEl.querySelectorAll(".tree-file")) {
+      row.classList.toggle("current", row.dataset.path === currentPath);
+    }
+  }
+
+  /** Expands whatever is hiding a path: its section, and its parent folders. */
+  function revealAncestors(path) {
+    if (!path) return false;
+
+    const workspace = workspaces.find(w => w.entries.some(e => e.path === path));
+    if (!workspace) return false;
+
+    let changed = collapsed.delete(workspace.root);
+
+    let entry = workspace.entries.find(e => e.path === path);
+    while (entry && entry.parent && entry.parent !== workspace.root) {
+      if (!expanded.has(entry.parent)) { expanded.add(entry.parent); changed = true; }
+      entry = workspace.entries.find(e => e.path === entry.parent);
+    }
+
+    return changed;
   }
 
   /**
@@ -200,9 +358,9 @@ window.Workspace = (() => {
       applyCurrent();
     }
 
-    if (!moved || !currentPath || !treeEl) return;
+    if (!moved || !currentPath || !sectionsEl) return;
 
-    const row = treeEl.querySelector(`.tree-file[data-path="${CSS.escape(currentPath)}"]`);
+    const row = sectionsEl.querySelector(`.tree-file[data-path="${CSS.escape(currentPath)}"]`);
     if (row) row.scrollIntoView({ block: "nearest" });
   }
 
@@ -236,18 +394,18 @@ window.Workspace = (() => {
   }
 
   /**
-   * Opens the picker over the workspace, or over `fallback` (recent files) when no
-   * workspace is bound. Ctrl+P is worth having even before a folder is opened.
+   * Opens the picker over every open folder, or over `fallback` (recent files) when no
+   * folder is bound. Ctrl+P is worth having before anything is opened.
    */
   function openQuick(fallback) {
-    quickSource = data ? null : (fallback && fallback.length ? fallback : null);
+    quickSource = hasWorkspace() ? null : (fallback && fallback.length ? fallback : null);
 
-    if (!data && !quickSource) {
+    if (!hasWorkspace() && !quickSource) {
       if (hooks.onNoWorkspace) hooks.onNoWorkspace();
       return;
     }
 
-    quickInputEl.placeholder = data ? "Go to file" : "Recent files";
+    quickInputEl.placeholder = hasWorkspace() ? "Go to file" : "Recent files";
     quickEl.hidden = false;
     quickInputEl.value = "";
     quickIndex = 0;
@@ -255,29 +413,36 @@ window.Workspace = (() => {
     quickInputEl.focus();
   }
 
-  function closeQuick() {
-    quickEl.hidden = true;
-  }
+  function closeQuick() { quickEl.hidden = true; }
+  function isQuickOpen() { return quickEl && !quickEl.hidden; }
 
-  function isQuickOpen() {
-    return quickEl && !quickEl.hidden;
+  /** With several folders open a bare relative path is ambiguous, so it is prefixed. */
+  function describe(entry) {
+    if (!entry.root) {
+      const name = entry.path.split(/[\\/]/).pop();
+      return { name, where: entry.path, match: entry.path };
+    }
+
+    const workspace = workspaces.find(w => w.root === entry.root);
+    const relative = entry.path.slice(entry.root.length + 1);
+    const folder = relative.slice(0, Math.max(0, relative.length - entry.name.length - 1));
+    const prefix = workspaces.length > 1 && workspace ? workspace.name + "\\" : "";
+
+    return { name: entry.name, where: prefix + folder, match: prefix + relative };
   }
 
   function renderQuick() {
     const query = quickInputEl.value.trim();
 
-    // Without a workspace root there is no common prefix to strip, so recent files
-    // are matched and shown against their full path.
     const entries = quickSource
-      ? quickSource.map(path => ({ path, name: path.split(/[\\/]/).pop() }))
+      ? quickSource.map(path => ({ path, name: path.split(/[\\/]/).pop(), root: null }))
       : files();
-    const rootLength = quickSource ? 0 : data.root.length + 1;
 
     quickMatches = entries
-      .map(entry => ({ entry, relative: entry.path.slice(rootLength) }))
-      .map(item => ({ ...item, rank: query ? score(item.relative, query) : 0 }))
+      .map(entry => ({ entry, ...describe(entry) }))
+      .map(item => ({ ...item, rank: query ? score(item.match, query) : 0 }))
       .filter(item => item.rank >= 0)
-      .sort((a, b) => b.rank - a.rank || a.relative.localeCompare(b.relative))
+      .sort((a, b) => b.rank - a.rank || a.match.localeCompare(b.match))
       .slice(0, 40);
 
     quickListEl.replaceChildren();
@@ -289,12 +454,11 @@ window.Workspace = (() => {
 
       const name = document.createElement("span");
       name.className = "quick-name";
-      name.textContent = item.entry.name;
+      name.textContent = item.name;
 
       const where = document.createElement("span");
       where.className = "quick-path";
-      const folder = item.relative.slice(0, Math.max(0, item.relative.length - item.entry.name.length - 1));
-      where.textContent = folder;
+      where.textContent = item.where;
 
       row.append(name, where);
       quickListEl.append(row);
@@ -340,8 +504,12 @@ window.Workspace = (() => {
   }
 
   return {
-    configure, set, render, root, files, setVisible, isVisible, hasWorkspace, currentFile: () => currentPath,
-    expandedPaths, setExpanded, highlight,
+    configure, set, render, files,
+    roots, hasWorkspace, setVisible, isVisible,
+    expandedPaths, setExpanded,
+    collapsedRoots, setCollapsedRoots,
+    sectionWeights, setSectionWeights,
+    highlight, currentFile: () => currentPath,
     openQuick, closeQuick, isQuickOpen
   };
 })();

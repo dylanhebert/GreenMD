@@ -481,8 +481,8 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 
 .sidebar {
   flex: 0 0 230px;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -707,3 +707,67 @@ mark.find-current {
   cursor: pointer;
 }
 .pane-notice button:hover { background: #3a3520; }
+
+
+/* ---------- workspace sections ---------- */
+
+/*
+ * One section per open folder, sharing the sidebar's height by flex weight. Sections
+ * hold a minimum height, so past a handful of folders the stack overflows and the
+ * sidebar scrolls rather than reducing every tree to a sliver.
+ */
+.ws-sections {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ws-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 90px;
+  min-width: 0;
+  overflow: hidden;
+}
+.ws-section.collapsed { min-height: 0; }
+
+.ws-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  min-width: 0;
+  font-size: 11px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+.ws-header:hover { color: var(--text); }
+
+.ws-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ws-count {
+  margin-left: auto;
+  padding: 0 5px;
+  font-size: 10px;
+  letter-spacing: 0;
+  color: var(--text-muted);
+  background: #23231f;
+  border-radius: 8px;
+}
+
+.ws-section .tree { flex: 1 1 auto; min-height: 0; }
+
+.ws-divider {
+  flex: 0 0 5px;
+  background: var(--border);
+  cursor: row-resize;
+}
+.ws-divider:hover { background: var(--border-strong); }
