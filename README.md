@@ -101,8 +101,9 @@ ships.
 
 ```
 dotnet build GreenMD.sln
-npm install --prefix tests
-npm test --prefix tests
+cd tests
+npm install
+npm test
 ```
 
 `tools/Publish.ps1 -Register` installs to `%LOCALAPPDATA%\Programs\GreenMD` and

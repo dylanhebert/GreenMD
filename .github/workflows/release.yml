@@ -28,8 +28,14 @@ jobs:
 
       # The suite catches the failure mode a build cannot: a JavaScript exception
       # leaves a blank window while the process stays perfectly healthy.
+      #
+      # working-directory rather than --prefix: npm 10, which Node 22 ships, ignores
+      # a --prefix given after the subcommand and demands a package.json at the repo
+      # root -- which this repo deliberately does not have. Verified against npm@10;
+      # npm 11 accepted either form, which is why this passed on a dev machine.
       - name: Install test tooling
-        run: npm install --prefix tests
+        run: npm install
+        working-directory: tests
 
       - name: Lint sources
         run: node tests/lint-sources.mjs
