@@ -1774,6 +1774,29 @@ check("pasting an image into an unsaved note explains itself instead of vanishin
       && $("#statusText").textContent.includes("Save the note first"),
       $("#statusText").textContent);
 
+// --- persistent changed dots on tabs ---
+send("doc-updated", markPayload('<h1 id="w">W</h1><p>fresh delta</p>'));
+check("uncleared marks put a dot on the tab",
+      tabFor(MARK).classList.contains("changed"));
+
+tabFor(MARK).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("opening the tab keeps the dot",
+      tabFor(MARK).classList.contains("changed"));
+
+key("m", { ctrlKey: true });
+check("dismissing the marks clears the dot",
+      !tabFor(MARK).classList.contains("changed"));
+
+// The dot follows the visibility toggle, like every other bit of mark paint.
+send("doc-updated", markPayload('<h1 id="w">W</h1><p>fresh delta two</p>'));
+toggleMarks.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("hiding change marks hides the dot",
+      !tabFor(MARK).classList.contains("changed"));
+toggleMarks.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("re-enabling change marks brings the dot back",
+      tabFor(MARK).classList.contains("changed"));
+key("m", { ctrlKey: true });
+
 // --- report ---
 console.log("");
 for (const r of results) {

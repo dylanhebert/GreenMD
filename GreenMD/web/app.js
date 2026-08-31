@@ -347,7 +347,8 @@ function buildTabstrip(pane) {
     tab.className = "tab"
       + (path === pane.active ? " active" : "")
       + (doc && doc.missing ? " missing" : "")
-      + (modeOf(pane, path) === "edit" ? " editing" : "");
+      + (modeOf(pane, path) === "edit" ? " editing" : "")
+      + (changeMarksVisible && changeMarks.has(path) ? " changed" : "");
     tab.dataset.path = path;
     tab.draggable = true;
     tab.title = path;
@@ -963,6 +964,7 @@ function dismissChangeMarks(path) {
     paintDoc(pane);
   }
   refreshChangeChips();
+  refreshChangedDots();
   Menu.refresh();
 }
 
@@ -1004,6 +1006,21 @@ function applyChangeMarks(scroller, path) {
 
 function changeChipText(marks) {
   return marks.count === 1 ? "1 change — mark seen" : marks.count + " changes — mark seen";
+}
+
+/**
+ * The tab dot mirrors uncleared change marks: it appears when a file changes,
+ * survives opening the tab and every re-render, and goes away only when the marks
+ * are dismissed -- a reminder that there are changes not yet marked as seen.
+ */
+function refreshChangedDots() {
+  for (const pane of Layout.panes()) {
+    for (const path of pane.tabs) {
+      const tab = panesEl.querySelector(
+        `[data-pane-id="${CSS.escape(pane.id)}"] [data-path="${CSS.escape(path)}"]`);
+      if (tab) tab.classList.toggle("changed", changeMarksVisible && changeMarks.has(path));
+    }
+  }
 }
 
 /** Updates every pane's chip in place, so a reload does not rebuild the header. */
@@ -1784,16 +1801,7 @@ host.addEventListener("message", (event) => {
         }
       }
 
-      // Tabs that are not the active one just get a dot.
-      for (const pane of Layout.panesShowing(payload.path)) {
-        if (pane.active === payload.path) continue;
-        const tab = panesEl.querySelector(
-          `[data-pane-id="${CSS.escape(pane.id)}"] [data-path="${CSS.escape(payload.path)}"]`);
-        if (tab) {
-          tab.classList.add("changed");
-          setTimeout(() => tab.classList.remove("changed"), 2500);
-        }
-      }
+      refreshChangedDots();
 
       if (Editor.noteExternalChange(payload.path)) post("get-text", payload.path);
       for (const pane of Layout.panesShowing(payload.path)) updateNotice(pane);
