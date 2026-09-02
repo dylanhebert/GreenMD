@@ -358,11 +358,35 @@ function setTabMark(tab, kind, on) {
   if (mark) mark.hidden = !on;
 }
 
+/**
+ * Drops a trailing .md, and only .md. Stripping every markdown extension would collapse
+ * notes.md and notes.markdown onto one label, and where they share a folder the
+ * folder-based disambiguation has nothing left to tell them apart with. The Files panel
+ * and the recent list apply the same rule; it is one line in three places rather than a
+ * shared module for one line.
+ */
+function stripMd(name) {
+  return /\.md$/i.test(name) ? name.slice(0, -3) : name;
+}
+
 /** The name a tab would show if nothing else were open: what the host called it. */
 function tabDisplayName(path) {
   const doc = docs.get(path);
-  if (doc && doc.title) return doc.title;
-  return path.split(/[\\/]/).pop();
+  const name = doc && doc.title ? doc.title : path.split(/[\\/]/).pop();
+  return stripMd(name);
+}
+
+/** Every path pinned in any pane, so the tree can mark them too. */
+function pinnedPaths() {
+  const pinned = new Set();
+
+  for (const pane of Layout.panes()) {
+    for (const path of pane.tabs) {
+      if (Layout.isPinned(pane.id, path)) pinned.add(path);
+    }
+  }
+
+  return [...pinned];
 }
 
 const TAB_LABEL_MAX = 30;
@@ -788,7 +812,7 @@ function toggleMode(pane) {
   applyMode(pane);
   refreshPaneChrome(pane);
   refreshDirtyMarks();
-  Workspace.setOpenFiles(Layout.openPaths(), editingPaths());
+  Workspace.setOpenFiles(Layout.openPaths(), editingPaths(), pinnedPaths());
   saveSession();
 
   const editor = editorElementOf(pane);
@@ -886,7 +910,7 @@ function renderAll({ keepAnchors = true, save = true } = {}) {
 
   const pane = Layout.activePane();
   Workspace.highlight(pane && pane.active ? pane.active : null);
-  Workspace.setOpenFiles(Layout.openPaths(), editingPaths());
+  Workspace.setOpenFiles(Layout.openPaths(), editingPaths(), pinnedPaths());
 
   for (const p of Layout.panes()) applyMode(p);
   refreshDirtyMarks();

@@ -1256,8 +1256,12 @@ check("the most recently opened file is first",
       recentItems().map(i => i.dataset.recentPath).join(" | "));
 check("the one before it comes second",
       recentItems()[1]?.dataset.recentPath === RECENT_A);
-check("a File-menu recent entry shows the file name",
-      (recentItems()[0]?.textContent || "").includes("beta.md"));
+// Asserted as "has the name and not the extension" rather than just containing "beta",
+// which a label of "beta.md" would also satisfy.
+check("a File-menu recent entry shows the name without the .md",
+      (recentItems()[0]?.textContent || "").includes("beta")
+      && !(recentItems()[0]?.textContent || "").includes(".md"),
+      recentItems()[0]?.textContent);
 check("a File-menu recent entry shows its folder, to tell duplicates apart",
       (recentItems()[0]?.textContent || "").includes("recent"),
       recentItems()[0]?.textContent);
@@ -1885,7 +1889,7 @@ function labelDoc(path, title, folder) {
 const L_UNIQUE = L_DIR + SEP + "unique-note.md";
 send("doc-opened", labelDoc(L_UNIQUE, "unique-note.md", L_DIR));
 check("a unique name shows bare, with no folder noise",
-      labelOf(L_UNIQUE) === "unique-note.md", labelOf(L_UNIQUE));
+      labelOf(L_UNIQUE) === "unique-note", labelOf(L_UNIQUE));
 
 const L_API = L_DIR + SEP + "api" + SEP + "config-authoring.md";
 const L_FILE = L_DIR + SEP + "file" + SEP + "config-authoring.md";
@@ -1893,21 +1897,26 @@ send("doc-opened", labelDoc(L_API, "config-authoring.md", L_DIR + SEP + "api"));
 send("doc-opened", labelDoc(L_FILE, "config-authoring.md", L_DIR + SEP + "file"));
 
 check("colliding names gain the folder that differs",
-      labelOf(L_API) === "api/config-authoring.md"
-      && labelOf(L_FILE) === "file/config-authoring.md",
+      labelOf(L_API) === "api/config-authoring"
+      && labelOf(L_FILE) === "file/config-authoring",
       labelOf(L_API) + "  |  " + labelOf(L_FILE));
 check("the unique name is left alone by someone else's collision",
-      labelOf(L_UNIQUE) === "unique-note.md", labelOf(L_UNIQUE));
+      labelOf(L_UNIQUE) === "unique-note", labelOf(L_UNIQUE));
 
 const L_LONG = L_DIR + SEP + "8-24-devnet_testing_session_with_extra_words.md";
 send("doc-opened", labelDoc(L_LONG, "8-24-devnet_testing_session_with_extra_words.md", L_DIR));
 const longLabel = labelOf(L_LONG);
+// Keeping the tail is the whole point: end-truncation left "8-24-devnet_testing_se…"
+// and threw away the words that tell this apart from the other 8-24 documents.
 check("a long name truncates in the middle, not at the end",
-      longLabel.includes("…") && longLabel.startsWith("8-24") && longLabel.endsWith(".md"),
+      longLabel.includes("…") && longLabel.startsWith("8-24") && longLabel.endsWith("words"),
       longLabel);
 check("the truncated label is actually shorter than the name",
-      longLabel.length < "8-24-devnet_testing_session_with_extra_words.md".length,
+      longLabel.length < "8-24-devnet_testing_session_with_extra_words".length,
       longLabel.length + " chars");
+check("no tab label anywhere keeps its .md",
+      $$(".tab-label").every(l => !l.textContent.endsWith(".md")),
+      $$(".tab-label").map(l => l.textContent).filter(t => t.endsWith(".md")).join(" | "));
 check("the full path is still on the tab's tooltip",
       tabFor(L_LONG)?.getAttribute("title") === L_LONG);
 
@@ -2030,6 +2039,52 @@ send("workspace", { workspaces: [{
 check("a real ancestor folder does cover them",
       !elsewhereRows().includes(E_A) && !elsewhereRows().includes(E_B),
       elsewhereRows().join(" | "));
+
+// --- Files panel: names without .md, and markers that cannot be clipped ---
+send("workspace", { workspaces: [{
+  root: E_DIR, name: "notes", truncated: false,
+  entries: [
+    { path: E_A, name: "loose-a.md", parent: E_DIR, dir: false },
+    { path: E_B, name: "loose-b.md", parent: E_DIR, dir: false }
+  ]
+}] });
+
+const treeLabels = () => $$(".ws-section .tree-file .tree-label").map(l => l.textContent);
+check("tree rows drop the .md as well",
+      treeLabels().includes("loose-a") && !treeLabels().some(t => t.endsWith(".md")),
+      treeLabels().join(" | "));
+
+// The same clipping trap as the tab strip, in a second place: .tree-label truncates,
+// and the edit pencil was a ::after on it. Your sidebar has plenty of names long
+// enough to have been eating it.
+const treeLabelRule = cssText.match(/^\.tree-label\s*\{[^}]*\}/m)?.[0] ?? "";
+check("the tree label is the box that truncates",
+      /overflow:\s*hidden/.test(treeLabelRule)
+      && /text-overflow:\s*ellipsis/.test(treeLabelRule),
+      treeLabelRule.replace(/\s+/g, " "));
+check("no tree marker is painted as a pseudo-element on that label",
+      !/\.tree-label::(before|after)/.test(cssText),
+      (cssText.match(/[^\n{]*\.tree-label::(before|after)/g) || []).join(" | "));
+check("tree rows carry marker elements, outside the label",
+      $$(".ws-section .tree-file .tree-mark").length > 0
+      && $$(".ws-section .tree-file .tree-mark").every(m => !m.closest(".tree-label")),
+      $$(".ws-section .tree-file .tree-mark").length + " marks");
+
+// A pin is a per-pane fact, but the tree marks it wherever it shows.
+const treeRowFor = path =>
+  $$(".ws-section .tree-file").find(r => r.dataset.path === path);
+send("doc-opened", labelDoc(E_A, "loose-a.md", E_DIR));
+rightClickTab(E_A);
+contextItemByLabel("Pin tab")?.dispatchEvent(
+  new window.MouseEvent("click", { bubbles: true }));
+
+check("a pinned document is marked in the Files panel too",
+      treeRowFor(E_A)?.classList.contains("pinned")
+      && !treeRowFor(E_A)?.querySelector('[data-mark="pinned"]')?.hidden,
+      treeRowFor(E_A)?.className);
+check("an unpinned neighbour is not marked",
+      !treeRowFor(E_B)?.classList.contains("pinned"),
+      treeRowFor(E_B)?.className);
 
 // --- report ---
 console.log("");

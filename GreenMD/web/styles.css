@@ -240,6 +240,9 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .tab.pinned {
   max-width: 132px;
   border-right-color: var(--border-strong);
+  /* Inset rather than a real top border, so pinning does not shift the strip by 2px.
+     Accent, because amber and green are already spoken for by changed and live. */
+  box-shadow: inset 0 2px 0 var(--accent);
 }
 .tab.pinned .tab-close { opacity: 0; }
 .tab.pinned:hover .tab-close { opacity: 1; }
@@ -686,10 +689,28 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 }
 .tree-file.current .tree-label { font-weight: 600; text-decoration: none; }
 
-.tree-file.editing .tree-label::after {
-  content: " ✎";
-  color: var(--live);
+/*
+ * Row markers are real elements, not pseudo-elements on .tree-label -- that label
+ * truncates with text-overflow, so a marker at its trailing edge was clipped by exactly
+ * the long filename that makes it worth showing, and a single ::after could not carry
+ * pinned and editing at once. Same fix as the tab strip, same reasons.
+ */
+.tree-mark {
+  display: inline-block;
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 11px;
+  line-height: 1;
 }
+.tree-mark[hidden] { display: none; }
+
+/* Accent, deliberately not amber or green: those already mean changed and live/dirty,
+   and a third meaning on either would blur the one carrying real information. */
+.tree-mark-pinned { color: var(--accent); }
+.tree-mark-editing { color: var(--live); }
+
+/* Two markers on one row: only the first claims the free space. */
+.tree-mark-pinned + .tree-mark-editing { margin-left: 4px; }
 
 .tree-caret {
   width: 1.1em;
@@ -883,7 +904,13 @@ mark.find-current {
      bottom band scrolls a little further, so new lines appear with room below. */
   scroll-padding-bottom: 15vh;
 }
-.editor::selection { background: #3a4d46; }
+/*
+ * Translucent, and that is load-bearing rather than taste. The textarea is stacked on
+ * top of the <pre> that draws the visible glyphs, and its own text is transparent -- so
+ * an opaque selection background painted solid rectangles over the only layer with
+ * anything readable in it. Alpha lets the highlighted source show through the selection.
+ */
+.editor::selection { background: rgba(84, 138, 122, .45); }
 
 /* ---------- markdown source tokens ---------- */
 

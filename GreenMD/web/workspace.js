@@ -33,9 +33,10 @@ window.Workspace = (() => {
   /** The file the active pane is showing. Owned here so a rebuild cannot lose it. */
   let currentPath = null;
 
-  /** Paths open in any tab, and those currently in source mode. */
+  /** Paths open in any tab, those in source mode, and those pinned in any pane. */
   let openPaths = new Set();
   let editingPaths = new Set();
+  let pinnedFiles = new Set();
 
   let hooks = {};
 
@@ -123,6 +124,27 @@ window.Workspace = (() => {
   // answer to "which folder should I add?": each group offers to become one.
 
   const BACKSLASH = String.fromCharCode(92);
+
+  /** The same trailing-.md rule the tabs and the recent list apply. */
+  function stripMd(name) {
+    return /\.md$/i.test(name) ? name.slice(0, -3) : name;
+  }
+
+  /** One marker element on a tree row, hidden until its state is live. */
+  function rowMark(kind, glyph) {
+    const mark = document.createElement("span");
+    mark.className = "tree-mark tree-mark-" + kind;
+    mark.dataset.mark = kind;
+    mark.textContent = glyph;
+    mark.hidden = true;
+    mark.setAttribute("aria-hidden", "true");
+    return mark;
+  }
+
+  function setRowMark(row, kind, on) {
+    const mark = row.querySelector('[data-mark="' + kind + '"]');
+    if (mark) mark.hidden = !on;
+  }
 
   function lastSeparator(path) {
     return Math.max(path.lastIndexOf("/"), path.lastIndexOf(BACKSLASH));
@@ -233,8 +255,8 @@ window.Workspace = (() => {
 
         const rowLabel = document.createElement("span");
         rowLabel.className = "tree-label";
-        rowLabel.textContent = baseNameOf(path);
-        row.append(rowLabel);
+        rowLabel.textContent = stripMd(baseNameOf(path));
+        row.append(rowLabel, rowMark("pinned", "◆"), rowMark("editing", "✎"));
 
         tree.append(row);
       }
@@ -350,8 +372,10 @@ window.Workspace = (() => {
 
       const label = document.createElement("span");
       label.className = "tree-label";
-      label.textContent = entry.name;
+      label.textContent = entry.dir ? entry.name : stripMd(entry.name);
       row.append(label);
+
+      if (!entry.dir) row.append(rowMark("pinned", "◆"), rowMark("editing", "✎"));
 
       container.append(row);
 
@@ -472,15 +496,24 @@ window.Workspace = (() => {
       row.classList.toggle("current", path === currentPath);
       row.classList.toggle("open", path !== currentPath && openPaths.has(path));
       row.classList.toggle("editing", editingPaths.has(path));
+      row.classList.toggle("pinned", pinnedFiles.has(path));
+
+      // Marks are real elements for the same reason the tab strip's are: .tree-label
+      // truncates, so a marker painted at its trailing edge is clipped by exactly the
+      // long filename that makes it worth showing -- and one ::after cannot carry two
+      // states, so pinned and editing would have overwritten each other.
+      setRowMark(row, "pinned", pinnedFiles.has(path));
+      setRowMark(row, "editing", editingPaths.has(path));
     }
   }
 
-  /** Which files are open in a tab, and which of those are in source mode. */
-  function setOpenFiles(open, editing) {
+  /** Which files are open in a tab, which are in source mode, and which are pinned. */
+  function setOpenFiles(open, editing, pinned) {
     const before = elsewhereKey();
 
     openPaths = new Set(open || []);
     editingPaths = new Set(editing || []);
+    pinnedFiles = new Set(pinned || []);
 
     // The Elsewhere section is built from the open set, so it has to be rebuilt when
     // that set moves -- but only then. A render replaces every row in the panel, and

@@ -194,7 +194,9 @@ window.Menu = (() => {
 
   function fileNameOf(path) {
     const cut = lastCut(path);
-    return cut >= 0 ? path.slice(cut + 1) : path;
+    const name = cut >= 0 ? path.slice(cut + 1) : path;
+    // The same trailing-.md rule the tabs and the Files panel apply.
+    return /\.md$/i.test(name) ? name.slice(0, -3) : name;
   }
 
   function folderNameOf(path) {
