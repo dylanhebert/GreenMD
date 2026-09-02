@@ -561,10 +561,27 @@ function buildHeader(pane) {
   const meta = document.createElement("div");
   meta.className = "dochead-meta";
 
-  const unsaved = document.createElement("span");
+  /*
+   * A button rather than a label, and left-click does the thing the label already tells
+   * you to do. A right-click-only control is a dead end: nothing about it suggests
+   * there is anything to find. Giving it the obvious primary action makes `cursor:
+   * pointer` honest, puts it on the keyboard, and matches the changes chip beside it,
+   * which is already a button that acts on click.
+   */
+  const unsaved = document.createElement("button");
   unsaved.className = "dochead-unsaved";
+  unsaved.type = "button";
   unsaved.textContent = "unsaved — Ctrl+S";
+  unsaved.title = "Unsaved edits. Click to save. Right-click to clear them.";
   unsaved.hidden = !(pane.active && Editor.isDirty(pane.id, pane.active));
+
+  unsaved.addEventListener("click", () => { Layout.setActive(pane.id); saveActive(false); });
+
+  unsaved.addEventListener("contextmenu", event => {
+    event.preventDefault();
+    Layout.setActive(pane.id);
+    openDiscardMenu(event, pane);
+  });
 
   const changes = document.createElement("button");
   changes.className = "dochead-changes";
@@ -589,18 +606,8 @@ function buildHeader(pane) {
   mode.className = "mode-button" + (editingNow ? " editing" : "");
   mode.type = "button";
   mode.textContent = editingNow ? "Editing" : "Edit";
-  mode.title = "Toggle source editing (Ctrl+E). Right-click to clear unsaved edits.";
+  mode.title = "Toggle source editing (Ctrl+E)";
   mode.addEventListener("click", () => { Layout.setActive(pane.id); toggleMode(pane); });
-
-  // Right-click offers to throw the unsaved edits away. It confirms first, and that is
-  // not politeness: silently discarding an edit is the one thing this app is built not
-  // to do, and a menu item one pixel from the Edit button is exactly where a misclick
-  // would land.
-  mode.addEventListener("contextmenu", event => {
-    event.preventDefault();
-    Layout.setActive(pane.id);
-    openDiscardMenu(event, pane);
-  });
 
   const badge = document.createElement("button");
   badge.className = "zoom-badge";

@@ -2219,15 +2219,72 @@ check("the tab and the row agree on which markers are live",
       + "  row: " + shownRowMarks(E_A).join(","));
 
 // --- clearing unsaved edits takes two clicks ---
-const modeButton = () => tabFor(E_A).closest(".pane").querySelector(".mode-button");
-function rightClickMode() {
+// The offer hangs off the "unsaved" badge rather than the Edit button: it is the
+// control that only exists when there is something to clear, so it is where you would
+// look for it. It is a button now, so click saves and the pointer cursor is honest.
+const unsavedBadge = () =>
+  tabFor(E_A).closest(".pane").querySelector(".dochead-unsaved");
+
+function rightClickBadge() {
   const event = new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true });
-  modeButton().dispatchEvent(event);
+  unsavedBadge().dispatchEvent(event);
   return event;
 }
 
-const menuEvent = rightClickMode();
-check("right-clicking Edit suppresses the native menu", menuEvent.defaultPrevented);
+check("the unsaved badge is a real button", unsavedBadge()?.tagName === "BUTTON",
+      unsavedBadge()?.tagName);
+check("the badge only shows while there is something unsaved",
+      unsavedBadge()?.hidden === false);
+check("its tooltip names both actions",
+      (unsavedBadge()?.title || "").includes("save")
+      && (unsavedBadge()?.title || "").includes("Right-click"),
+      unsavedBadge()?.title);
+
+// The badge belongs to whichever document the pane is showing, so activate the one
+// under test rather than assuming it is already current.
+tabFor(E_A).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+
+// E_A went stale when the doc-updated above landed on its unsaved buffer, and the
+// overwrite guard refuses an unforced save on a stale buffer. So the badge must refuse
+// too -- it routes through the same path, and a save button that quietly bypassed that
+// guard would be a hole straight through it.
+const beforeStaleBadge = posted.filter(m => m.type === "save-doc").length;
+unsavedBadge().dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("the badge will not overwrite a file that moved on disk",
+      posted.filter(m => m.type === "save-doc").length === beforeStaleBadge,
+      $("#statusText").textContent);
+
+// Resolve it the way the notice asks, so the next assertion is about the badge rather
+// than about the guard.
+[...tabFor(E_A).closest(".pane").querySelectorAll(".pane-notice button")]
+  .find(b => b.textContent === "Keep mine")
+  ?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+send("save-result", { path: E_A, saved: true, conflict: false });
+
+// Dirty again, cleanly this time.
+eEditor.value = SRC_MINE;
+eEditor.dispatchEvent(new window.Event("input", { bubbles: true }));
+check("the badge is back once it is dirty again", unsavedBadge()?.hidden === false);
+
+const beforeBadgeSave = posted.filter(m => m.type === "save-doc").length;
+unsavedBadge().dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("clicking the badge saves the document it belongs to",
+      posted.filter(m => m.type === "save-doc").length === beforeBadgeSave + 1
+      && posted.filter(m => m.type === "save-doc").pop()?.payload?.path === E_A,
+      String(posted.filter(m => m.type === "save-doc").pop()?.payload?.path));
+
+// Left in an unsaved state for the discard tests below. Confirm the save first so the
+// buffer's baseline is known, then type something genuinely different -- setting it back
+// to the text the baseline already holds leaves it clean, which is how a first draft of
+// this quietly handed the discard tests a document with nothing to discard.
+send("save-result", { path: E_A, saved: true, conflict: false });
+eEditor.value = SRC_CLEAN;
+eEditor.dispatchEvent(new window.Event("input", { bubbles: true }));
+check("the document is unsaved again, ready for the discard tests",
+      tabFor(E_A).classList.contains("dirty"), tabFor(E_A).className);
+
+const menuEvent = rightClickBadge();
+check("right-clicking the badge suppresses the native menu", menuEvent.defaultPrevented);
 check("it offers to clear this document's unsaved edits",
       !!contextItemByLabel("Clear unsaved edits..."),
       $$(".context-menu .menu-item").map(i => i.textContent).join("|"));
@@ -2250,7 +2307,7 @@ check("Escape dismisses the prompt and keeps the edits",
       $("#discardPrompt").hidden === true && tabFor(E_A).classList.contains("dirty"),
       $("#statusText").textContent);
 
-rightClickMode();
+rightClickBadge();
 contextItemByLabel("Clear unsaved edits...")?.dispatchEvent(
   new window.MouseEvent("click", { bubbles: true }));
 $("#discardCancel").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
@@ -2270,7 +2327,7 @@ check("both documents are now unsaved",
 
 // Back to E_A and discard from there.
 tabFor(E_A).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-rightClickMode();
+rightClickBadge();
 contextItemByLabel("Clear unsaved edits...")?.dispatchEvent(
   new window.MouseEvent("click", { bubbles: true }));
 check("the prompt names only the active document",

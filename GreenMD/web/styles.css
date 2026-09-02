@@ -964,15 +964,21 @@ mark.find-current {
    changes: knowing a tab is in source mode matters even when it is clean. */
 .tab.editing { border-bottom-color: #2a4d43; }
 
+/* A button now: click saves, right-click offers to clear the edits. cursor:pointer is
+   honest because of the click action -- a right-click-only control would want
+   cursor:context-menu instead, and would still be undiscoverable. */
 .dochead-unsaved {
   padding: 1px 8px;
+  font-family: inherit;
   font-size: 11px;
   color: var(--live);
   background: #1b2521;
   border: 1px solid #2a4d43;
   border-radius: 10px;
   white-space: nowrap;
+  cursor: pointer;
 }
+.dochead-unsaved:hover { background: #22332c; border-color: #3c6a5b; }
 .dochead-unsaved[hidden] { display: none; }
 
 .pane-notice {
