@@ -358,9 +358,67 @@ function setTabMark(tab, kind, on) {
   if (mark) mark.hidden = !on;
 }
 
+/** The name a tab would show if nothing else were open: what the host called it. */
+function tabDisplayName(path) {
+  const doc = docs.get(path);
+  if (doc && doc.title) return doc.title;
+  return path.split(/[\\/]/).pop();
+}
+
+const TAB_LABEL_MAX = 30;
+
+/**
+ * Middle-truncates rather than clipping the end. Real document names here are dated and
+ * prefixed -- 8-24-devnet_testing_session.md -- so the front is the least distinguishing
+ * part and end-truncation eats exactly the words that tell two tabs apart.
+ */
+function shortenMiddle(text, max = TAB_LABEL_MAX) {
+  if (text.length <= max) return text;
+
+  const head = Math.ceil((max - 1) / 2);
+  const tail = max - 1 - head;
+  return text.slice(0, head) + "…" + text.slice(text.length - tail);
+}
+
+/**
+ * The shortest labels that still tell a pane's tabs apart: the bare name wherever it is
+ * unique, and the differing parent folder prepended only where two tabs share one.
+ * Scoped to the pane rather than the window, because a name shown one way here and
+ * another way in the pane beside it reads as two different documents.
+ *
+ * Untitled notes are left alone -- they have no real path to disambiguate with, and
+ * several of them are all legitimately called the same thing.
+ */
+function tabLabels(paths) {
+  const counts = new Map();
+  for (const path of paths) {
+    const name = tabDisplayName(path);
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+
+  const labels = new Map();
+
+  for (const path of paths) {
+    const name = tabDisplayName(path);
+    const segments = path.split(/[\\/]/).filter(Boolean);
+
+    if (counts.get(name) === 1 || segments.length < 2) {
+      labels.set(path, shortenMiddle(name));
+      continue;
+    }
+
+    const parent = segments[segments.length - 2];
+    labels.set(path, shortenMiddle(parent + "/" + name));
+  }
+
+  return labels;
+}
+
 function buildTabstrip(pane) {
   const strip = document.createElement("div");
   strip.className = "tabstrip";
+
+  const labels = tabLabels(pane.tabs);
 
   for (const path of pane.tabs) {
     const doc = docs.get(path);
@@ -369,6 +427,7 @@ function buildTabstrip(pane) {
       + (path === pane.active ? " active" : "")
       + (doc && doc.missing ? " missing" : "")
       + (modeOf(pane, path) === "edit" ? " editing" : "")
+      + (Layout.isPinned(pane.id, path) ? " pinned" : "")
       + (changeMarksVisible && changeMarks.has(path) ? " changed" : "");
     tab.dataset.path = path;
     tab.draggable = true;
@@ -376,7 +435,7 @@ function buildTabstrip(pane) {
 
     const label = document.createElement("span");
     label.className = "tab-label";
-    label.textContent = doc ? doc.title : path.split(/[\\/]/).pop();
+    label.textContent = labels.get(path) ?? tabDisplayName(path);
 
     // Indicators are siblings of the label, never painted onto it. The label is the box
     // that truncates, so anything at its trailing edge is cut off by exactly the long
@@ -1426,7 +1485,13 @@ function openTabContextMenu(event, paneId, path) {
   const pane = Layout.pane(paneId);
   if (!pane) return;
 
-  const others = pane.tabs.filter(p => p !== path);
+  // Pinned tabs are the ones you keep coming back to, so a bulk close must not take
+  // them. That is most of the point of pinning: "close the rest" stops being a
+  // decision you have to think about.
+  const pinnedHere = p => Layout.isPinned(paneId, p);
+  const others = pane.tabs.filter(p => p !== path && !pinnedHere(p));
+  const closeable = pane.tabs.filter(p => !pinnedHere(p));
+  const pinned = pinnedHere(path);
 
   const menu = document.createElement("div");
   menu.className = "context-menu";
@@ -1434,13 +1499,20 @@ function openTabContextMenu(event, paneId, path) {
   // Every close funnels through requestCloseTab, so a dirty tab keeps its guard:
   // clean tabs go, dirty ones stay open with the unsaved-changes notice.
   menu.append(
+    contextItem(pinned ? "Unpin tab" : "Pin tab", {
+      run: () => {
+        Layout.setPinned(paneId, path, !pinned);
+        renderAll({ keepAnchors: true });
+      }
+    }),
     contextItem("Close", { run: () => requestCloseTab(paneId, path) }),
     contextItem("Close others", {
-      unavailable: others.length ? null : "No other tabs in this pane.",
+      unavailable: others.length ? null : "No other unpinned tabs in this pane.",
       run: () => { for (const other of others) requestCloseTab(paneId, other); }
     }),
     contextItem("Close all", {
-      run: () => { for (const open of [...pane.tabs]) requestCloseTab(paneId, open); }
+      unavailable: closeable.length ? null : "Every tab in this pane is pinned.",
+      run: () => { for (const open of closeable) requestCloseTab(paneId, open); }
     })
   );
 
@@ -2119,6 +2191,10 @@ Workspace.configure({
   onOpenFile(path) { post("open-file", path); },
   onChanged() { saveSession(); },
   onCloseFolder(root) { post("close-workspace", root); },
+  onAdoptFolder(root) {
+    post("open-workspace", root);
+    statusTextEl.textContent = "Added " + root + " to the sidebar.";
+  },
   onNoWorkspace() { statusTextEl.textContent = "Nothing recent yet — open a folder with Ctrl+K"; }
 });
 

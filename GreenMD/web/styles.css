@@ -230,6 +230,46 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .tab-mark-dirty,
 .tab-mark-editing { color: var(--live); }
 
+/*
+ * Pinned tabs sit at the front of the strip and give up width they do not need: a tab
+ * you keep permanently open is one you recognise, so it can afford a shorter label than
+ * one you opened a minute ago. The close button stays hidden until hover, because
+ * reaching for a neighbouring tab's × and hitting a pinned one is the mistake pinning
+ * is supposed to prevent.
+ */
+.tab.pinned {
+  max-width: 132px;
+  border-right-color: var(--border-strong);
+}
+.tab.pinned .tab-close { opacity: 0; }
+.tab.pinned:hover .tab-close { opacity: 1; }
+
+/* A seam after the last pinned tab, so the boundary is visible without a label. */
+.tab.pinned + .tab:not(.pinned) { border-left: 1px solid var(--border-strong); }
+
+/*
+ * The Elsewhere section: open documents that no added folder covers. It takes its
+ * natural height rather than a share of the panel -- it is usually two or three rows,
+ * and the folder trees are what the space is for.
+ */
+.ws-section.elsewhere { flex: 0 0 auto; }
+
+.elsewhere-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.elsewhere-group-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.elsewhere-group .icon-button { margin-left: auto; opacity: 0; }
+.elsewhere-group:hover .icon-button { opacity: 1; }
+
 /* Uncleared change marks: the dot stays -- through clicks and re-renders -- until
    the marks are dismissed. Amber, the same language as the marks themselves. */
 .tab-mark-changed {

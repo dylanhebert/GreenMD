@@ -273,23 +273,23 @@ send("workspace", { workspaces: [{
 }] });
 
 check("sidebar shown when a workspace opens", $("#sidebar").hidden === false);
-check("workspace name displayed", $(".ws-name")?.textContent === "proj");
-check("root files listed", $$(".ws-section .tree-file").length >= 1, `${$$(".ws-section .tree-file").length}`);
-check("subfolder listed", $$(".ws-section .tree-dir").length === 1);
-check("subfolder auto-expanded", $$(".ws-section .tree-file").length === 3,
-      `${$$(".ws-section .tree-file").length} files visible`);
+check("workspace name displayed", $(".ws-section:not(.elsewhere) .ws-name")?.textContent === "proj");
+check("root files listed", $$(".ws-section:not(.elsewhere) .tree-file").length >= 1, `${$$(".ws-section:not(.elsewhere) .tree-file").length}`);
+check("subfolder listed", $$(".ws-section:not(.elsewhere) .tree-dir").length === 1);
+check("subfolder auto-expanded", $$(".ws-section:not(.elsewhere) .tree-file").length === 3,
+      `${$$(".ws-section:not(.elsewhere) .tree-file").length} files visible`);
 check("nested files indented deeper",
-      parseFloat($$(".ws-section .tree-file")[2].style.paddingLeft) > parseFloat($$(".ws-section .tree-file")[0].style.paddingLeft));
+      parseFloat($$(".ws-section:not(.elsewhere) .tree-file")[2].style.paddingLeft) > parseFloat($$(".ws-section:not(.elsewhere) .tree-file")[0].style.paddingLeft));
 
 // collapsing a directory hides its children
-$$(".ws-section .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-check("collapsing a folder hides its files", $$(".ws-section .tree-file").length === 1,
-      `${$$(".ws-section .tree-file").length} visible`);
-$$(".ws-section .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+$$(".ws-section:not(.elsewhere) .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("collapsing a folder hides its files", $$(".ws-section:not(.elsewhere) .tree-file").length === 1,
+      `${$$(".ws-section:not(.elsewhere) .tree-file").length} visible`);
+$$(".ws-section:not(.elsewhere) .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 
 // clicking a file asks the host to open it
 const beforeOpen = posted.filter(m => m.type === "open-file").length;
-$$(".ws-section .tree-file")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+$$(".ws-section:not(.elsewhere) .tree-file")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 check("clicking a tree file requests open",
       posted.filter(m => m.type === "open-file").length === beforeOpen + 1);
 
@@ -360,7 +360,22 @@ check("doc-content painted the restored pane",
 
 // --- recent files feed quick-open when there is no workspace ---
 send("workspace", { workspaces: [] });
-check("sidebar hides when the workspace closes", $("#sidebar").hidden === true);
+
+// The panel used to hide the moment the last folder closed. It no longer does, and
+// that is the point of the Elsewhere list: documents open from outside every added
+// folder are exactly the ones that had nowhere to appear. It hides only when there is
+// genuinely nothing to show.
+check("closing every folder leaves the Elsewhere list standing",
+      $("#sidebar").hidden === false
+      && $$(".ws-section.elsewhere .tree-file").length > 0,
+      $$(".ws-section.elsewhere .tree-file").length + " rows under Elsewhere");
+check("no folder sections remain",
+      $$(".ws-section:not(.elsewhere)").length === 0);
+
+window.eval("Workspace.setOpenFiles([], [])");
+check("with no folders and nothing open, the panel hides",
+      $("#sidebar").hidden === true);
+window.eval("Workspace.setOpenFiles(Layout.openPaths(), [])");
 
 window.eval("Workspace.openQuick(['C:" + SEP + SEP + "docs" + SEP + SEP + "alpha.md'])");
 check("quick open falls back to recents", $("#quickOpen").hidden === false);
@@ -687,16 +702,16 @@ send("workspace", { workspaces: [{
   ]
 }] });
 
-const marked = () => $$(".ws-section .tree-file.current").map(r => r.dataset.path);
+const marked = () => $$(".ws-section:not(.elsewhere) .tree-file.current").map(r => r.dataset.path);
 
 check("active file is marked when the tree loads",
       marked().length === 1 && marked()[0] === TFILE, marked().join(","));
 check("its folder was expanded so the row is visible",
-      !!$(`.ws-section .tree-file[data-path="${window.CSS.escape(TFILE)}"]`));
+      !!$(`.ws-section:not(.elsewhere) .tree-file[data-path="${window.CSS.escape(TFILE)}"]`));
 
 // Expanding or collapsing a folder rebuilds the tree.
-$$(".ws-section .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-$$(".ws-section .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+$$(".ws-section:not(.elsewhere) .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+$$(".ws-section:not(.elsewhere) .tree-dir")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 check("marker survives a folder toggle",
       marked().length === 1 && marked()[0] === TFILE, marked().join(","));
 
@@ -731,29 +746,29 @@ send("workspace", { workspaces: [
   ]}
 ]});
 
-check("one section per folder", $$(".ws-section").length === 2,
-      `${$$(".ws-section").length} sections`);
+check("one section per folder", $$(".ws-section:not(.elsewhere)").length === 2,
+      `${$$(".ws-section:not(.elsewhere)").length} sections`);
 check("a divider sits between them", $$(".ws-divider").length === 1);
-check("sections are named", $$(".ws-name").map(n => n.textContent).join(",") === "alpha,beta",
-      $$(".ws-name").map(n => n.textContent).join(","));
+check("sections are named", $$(".ws-section:not(.elsewhere) .ws-name").map(n => n.textContent).join(",") === "alpha,beta",
+      $$(".ws-section:not(.elsewhere) .ws-name").map(n => n.textContent).join(","));
 check("each section shows its file count",
-      $$(".ws-count").map(c => c.textContent).join(",") === "2,1",
-      $$(".ws-count").map(c => c.textContent).join(","));
-check("files from both folders are listed", $$(".ws-section .tree-file").length === 3,
-      `${$$(".ws-section .tree-file").length}`);
+      $$(".ws-section:not(.elsewhere) .ws-count").map(c => c.textContent).join(",") === "2,1",
+      $$(".ws-section:not(.elsewhere) .ws-count").map(c => c.textContent).join(","));
+check("files from both folders are listed", $$(".ws-section:not(.elsewhere) .tree-file").length === 3,
+      `${$$(".ws-section:not(.elsewhere) .tree-file").length}`);
 check("sections start with equal weight",
-      $$(".ws-section").every(sec => sec.style.flex.startsWith("1 1")),
-      $$(".ws-section").map(sec => sec.style.flex).join(" | "));
+      $$(".ws-section:not(.elsewhere)").every(sec => sec.style.flex.startsWith("1 1")),
+      $$(".ws-section:not(.elsewhere)").map(sec => sec.style.flex).join(" | "));
 
 // Collapsing a section drops it to header height and gives up its share.
 $$(".ws-header")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 check("collapsing a section hides its tree",
-      $$(".ws-section")[0].querySelector(".tree") === null);
+      $$(".ws-section:not(.elsewhere)")[0].querySelector(".tree") === null);
 check("a collapsed section claims no space",
-      $$(".ws-section")[0].style.flex === "0 0 auto",
-      $$(".ws-section")[0].style.flex);
+      $$(".ws-section:not(.elsewhere)")[0].style.flex === "0 0 auto",
+      $$(".ws-section:not(.elsewhere)")[0].style.flex);
 check("the other folder still lists its files",
-      $$(".ws-section .tree-file").length === 1);
+      $$(".ws-section:not(.elsewhere) .tree-file").length === 1);
 $$(".ws-header")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 
 // Quick open spans every folder and disambiguates by folder name.
@@ -791,7 +806,7 @@ check("open folders are persisted as a list",
       JSON.stringify(wsSave?.payload?.workspaces));
 
 send("workspace", { workspaces: [] });
-check("no sections when every folder is closed", $$(".ws-section").length === 0);
+check("no sections when every folder is closed", $$(".ws-section:not(.elsewhere)").length === 0);
 
 // --- side panel toggles ---
 check("outline panel starts visible", $(".pane-outline").hidden === false);
@@ -1323,9 +1338,9 @@ function rightClickTab(path) {
 const rightClick = rightClickTab(CTX_B);
 check("right-clicking a tab opens the context menu", !!$(".context-menu"));
 check("the native context menu is suppressed", rightClick.defaultPrevented);
-check("it offers close, close others and close all",
+check("it offers pin, close, close others and close all",
       $$(".context-menu .menu-item").map(i => i.textContent).join("|")
-      === "Close|Close others|Close all",
+      === "Pin tab|Close|Close others|Close all",
       $$(".context-menu .menu-item").map(i => i.textContent).join("|"));
 
 key("Escape");
@@ -1351,7 +1366,8 @@ check("close others greys out with a single tab",
 greyedOthers?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 check("the greyed item closes no tabs", !$(".context-menu") && !!tabFor(CTX_B));
 check("the greyed item explains itself in the status bar",
-      $("#statusText").textContent.includes("No other tabs"), $("#statusText").textContent);
+      $("#statusText").textContent.includes("No other unpinned tabs"),
+      $("#statusText").textContent);
 
 // The context menu shares the menu bar's hover-out grace period.
 rightClickTab(CTX_B);
@@ -1851,6 +1867,169 @@ key("m", { ctrlKey: true });
 check("dismissing the marks hides the changed indicator",
       shownMarks(tabFor(MARK)).length === 2,
       shownMarks(tabFor(MARK)).map(m => m.className).join(" | "));
+
+// --- tab labels: shortest thing that still tells them apart ---
+// Real names here are dated and prefixed, so end-truncation eats the distinguishing
+// tail. And two docs called config-authoring.md in different folders were the same
+// label twice.
+const labelOf = path => tabFor(path)?.querySelector(".tab-label")?.textContent;
+
+const L_DIR = "C:" + SEP + "labels";
+function labelDoc(path, title, folder) {
+  return { path, title, folder,
+           html: '<h1 id="l">' + title + "</h1>",
+           outline: [{ level: 1, text: title, id: "l" }],
+           missing: false, loadedAt: new Date().toISOString() };
+}
+
+const L_UNIQUE = L_DIR + SEP + "unique-note.md";
+send("doc-opened", labelDoc(L_UNIQUE, "unique-note.md", L_DIR));
+check("a unique name shows bare, with no folder noise",
+      labelOf(L_UNIQUE) === "unique-note.md", labelOf(L_UNIQUE));
+
+const L_API = L_DIR + SEP + "api" + SEP + "config-authoring.md";
+const L_FILE = L_DIR + SEP + "file" + SEP + "config-authoring.md";
+send("doc-opened", labelDoc(L_API, "config-authoring.md", L_DIR + SEP + "api"));
+send("doc-opened", labelDoc(L_FILE, "config-authoring.md", L_DIR + SEP + "file"));
+
+check("colliding names gain the folder that differs",
+      labelOf(L_API) === "api/config-authoring.md"
+      && labelOf(L_FILE) === "file/config-authoring.md",
+      labelOf(L_API) + "  |  " + labelOf(L_FILE));
+check("the unique name is left alone by someone else's collision",
+      labelOf(L_UNIQUE) === "unique-note.md", labelOf(L_UNIQUE));
+
+const L_LONG = L_DIR + SEP + "8-24-devnet_testing_session_with_extra_words.md";
+send("doc-opened", labelDoc(L_LONG, "8-24-devnet_testing_session_with_extra_words.md", L_DIR));
+const longLabel = labelOf(L_LONG);
+check("a long name truncates in the middle, not at the end",
+      longLabel.includes("…") && longLabel.startsWith("8-24") && longLabel.endsWith(".md"),
+      longLabel);
+check("the truncated label is actually shorter than the name",
+      longLabel.length < "8-24-devnet_testing_session_with_extra_words.md".length,
+      longLabel.length + " chars");
+check("the full path is still on the tab's tooltip",
+      tabFor(L_LONG)?.getAttribute("title") === L_LONG);
+
+// --- pinned tabs ---
+// Driven through the context menu rather than by calling Layout directly, so the
+// wiring is covered too. Queried by pane id each time because a render replaces the
+// pane element and a held reference goes stale.
+const pinPaneId = tabFor(L_LONG).closest(".pane").dataset.paneId;
+const stripOrder = () =>
+  $$('[data-pane-id="' + pinPaneId + '"] .tab').map(t => t.dataset.path);
+
+check("the tab to pin does not start at the front",
+      stripOrder().indexOf(L_LONG) > 0, stripOrder().join(" | "));
+
+rightClickTab(L_LONG);
+check("an unpinned tab offers to pin", !!contextItemByLabel("Pin tab"),
+      $$(".context-menu .menu-item").map(i => i.textContent).join("|"));
+contextItemByLabel("Pin tab")?.dispatchEvent(
+  new window.MouseEvent("click", { bubbles: true }));
+
+check("pinning moves the tab to the front of the strip",
+      stripOrder()[0] === L_LONG, stripOrder().join(" | "));
+check("the pinned tab is marked as such",
+      tabFor(L_LONG)?.classList.contains("pinned"), tabFor(L_LONG)?.className);
+
+rightClickTab(L_LONG);
+check("a pinned tab offers to unpin instead", !!contextItemByLabel("Unpin tab"),
+      $$(".context-menu .menu-item").map(i => i.textContent).join("|"));
+key("Escape");
+
+// Close others must spare the pin -- that is most of the point of pinning.
+rightClickTab(L_API);
+contextItemByLabel("Close others")?.dispatchEvent(
+  new window.MouseEvent("click", { bubbles: true }));
+check("close others leaves the pinned tab open", !!tabFor(L_LONG));
+check("close others still closed an unpinned neighbour", !tabFor(L_UNIQUE));
+
+const serialized = window.eval("JSON.stringify(Layout.serialize())");
+check("pins ride along in the session", serialized.includes('"pinned"'),
+      serialized.slice(0, 160));
+check("the surviving pin is the tab that was pinned",
+      serialized.includes(JSON.stringify(L_LONG).slice(1, -1)),
+      serialized.slice(0, 240));
+
+// --- Elsewhere: open docs that no added folder covers ---
+// The hole this fills: workspace.js built the panel purely from workspace roots, so a
+// doc opened from Explorer or from a folder never added had no row anywhere. It existed
+// only as a tab and in the recent list.
+const E_ROOT = "C:" + SEP + "adopted";
+const E_IN = E_ROOT + SEP + "inside.md";
+const E_DIR = "C:" + SEP + "loose" + SEP + "notes";
+const E_A = E_DIR + SEP + "loose-a.md";
+const E_B = E_DIR + SEP + "loose-b.md";
+
+send("workspace", { workspaces: [{
+  root: E_ROOT, name: "adopted", truncated: false,
+  entries: [{ path: E_IN, name: "inside.md", parent: E_ROOT, dir: false }]
+}] });
+send("doc-opened", labelDoc(E_IN, "inside.md", E_ROOT));
+send("doc-opened", labelDoc(E_A, "loose-a.md", E_DIR));
+send("doc-opened", labelDoc(E_B, "loose-b.md", E_DIR));
+
+const elsewhereRows = () =>
+  $$(".ws-section.elsewhere .tree-file").map(r => r.dataset.path);
+const groupNames = () =>
+  $$(".elsewhere-group-name").map(n => n.textContent);
+
+check("a doc outside every added folder is listed under Elsewhere",
+      elsewhereRows().includes(E_A) && elsewhereRows().includes(E_B),
+      elsewhereRows().join(" | "));
+check("a doc inside an added folder is not duplicated there",
+      !elsewhereRows().includes(E_IN), elsewhereRows().join(" | "));
+check("loose docs are grouped by the folder they live in",
+      groupNames().includes("notes"), groupNames().join(","));
+check("an untitled note is not treated as being elsewhere",
+      !elsewhereRows().some(p => p.startsWith("untitled:")),
+      elsewhereRows().join(" | "));
+
+// The group heading is also the answer to "which folder should I add?".
+const beforeAdopt = posted.filter(m => m.type === "open-workspace").length;
+const adoptButton = $$(".elsewhere-group [data-adopt-root]")
+  .find(b => b.dataset.adoptRoot === E_DIR);
+check("each group offers to add its folder", !!adoptButton,
+      $$(".elsewhere-group [data-adopt-root]").map(b => b.dataset.adoptRoot).join(" | "));
+adoptButton?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+const adopted = posted.filter(m => m.type === "open-workspace").pop();
+check("adopting asks the host for that exact folder",
+      posted.filter(m => m.type === "open-workspace").length === beforeAdopt + 1
+      && adopted?.payload === E_DIR,
+      String(adopted?.payload));
+
+// Once the folder is a real workspace, its docs belong to the tree and must leave.
+send("workspace", { workspaces: [{
+  root: E_DIR, name: "notes", truncated: false,
+  entries: [
+    { path: E_A, name: "loose-a.md", parent: E_DIR, dir: false },
+    { path: E_B, name: "loose-b.md", parent: E_DIR, dir: false }
+  ]
+}] });
+check("adopted docs move out of Elsewhere into the folder tree",
+      !elsewhereRows().includes(E_A) && !elsewhereRows().includes(E_B),
+      elsewhereRows().join(" | "));
+check("they are listed in the new folder section instead",
+      $$(".ws-section:not(.elsewhere) .tree-file").map(r => r.dataset.path).includes(E_A));
+
+// A root that is a string prefix but not a parent must not swallow the docs:
+// C:\loos is not the folder C:\loose\notes lives in, however much it looks like it.
+// Without a separator check, startsWith would have said otherwise.
+send("workspace", { workspaces: [{
+  root: "C:" + SEP + "loos", name: "loos", truncated: false, entries: []
+}] });
+check("a shared string prefix is not mistaken for a parent folder",
+      elsewhereRows().includes(E_A) && elsewhereRows().includes(E_B),
+      elsewhereRows().join(" | "));
+
+// A genuine parent does cover them, one level up from their own folder.
+send("workspace", { workspaces: [{
+  root: "C:" + SEP + "loose", name: "loose", truncated: false, entries: []
+}] });
+check("a real ancestor folder does cover them",
+      !elsewhereRows().includes(E_A) && !elsewhereRows().includes(E_B),
+      elsewhereRows().join(" | "));
 
 // --- report ---
 console.log("");

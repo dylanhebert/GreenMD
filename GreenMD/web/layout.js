@@ -24,7 +24,45 @@ window.Layout = (() => {
 
   function newPane(tabs = [], active = null) {
     counter += 1;
-    return { type: "pane", id: "pane" + counter, tabs: [...tabs], active, anchors: {}, modes: {}, zoom: 1 };
+    return {
+      type: "pane", id: "pane" + counter, tabs: [...tabs], active,
+      anchors: {}, modes: {}, zoom: 1,
+      // Paths pinned in this pane, in pin order. Kept as a plain array rather than a Set
+      // so it survives the JSON round trip through the session untouched.
+      pinned: []
+    };
+  }
+
+  /**
+   * Pinned tabs sort to the front of the strip.
+   *
+   * Enforced by reordering `tabs` itself rather than by keeping a second ordered list.
+   * Everything downstream -- cycling, closing, dragging, the strip build -- already
+   * reads `tabs` as the one true order, and a second order would be a second thing to
+   * keep in step. Stable, so relative order inside each group survives.
+   */
+  function normalizePinned(pane) {
+    if (!pane || !pane.pinned || pane.pinned.length === 0) return;
+
+    const isPinned = path => pane.pinned.includes(path);
+    const head = pane.tabs.filter(isPinned);
+    const rest = pane.tabs.filter(path => !isPinned(path));
+    pane.tabs = [...head, ...rest];
+  }
+
+  function setPinned(paneId, path, on) {
+    const target = pane(paneId);
+    if (!target || !target.tabs.includes(path)) return;
+
+    target.pinned = target.pinned.filter(p => p !== path);
+    if (on) target.pinned.push(path);
+
+    normalizePinned(target);
+  }
+
+  function isPinned(paneId, path) {
+    const target = pane(paneId);
+    return !!target && Array.isArray(target.pinned) && target.pinned.includes(path);
   }
 
   function configure(next) { hooks = next || {}; }
@@ -102,6 +140,8 @@ window.Layout = (() => {
     target.tabs.splice(index, 1);
     delete target.anchors[path];
     delete target.modes[path];
+    // A pin must not outlive its tab, or reopening the file would silently pin it.
+    if (Array.isArray(target.pinned)) target.pinned = target.pinned.filter(p => p !== path);
 
     if (target.active === path) {
       target.active = target.tabs[Math.min(index, target.tabs.length - 1)] ?? null;
@@ -171,6 +211,9 @@ window.Layout = (() => {
         const at = Math.min(index > oldIndex ? index - 1 : index, target.tabs.length);
         target.tabs.splice(Math.max(0, at), 0, path);
       }
+      // Dragging an unpinned tab into the pinned run, or the other way, would otherwise
+      // leave the strip in an order the pin rule says is impossible.
+      normalizePinned(target);
       addTab(toPaneId, path);
       return;
     }
@@ -200,7 +243,8 @@ window.Layout = (() => {
         // Reading position per tab, so a restored session lands where it was left
         // rather than at the top of a long document.
         anchors: { ...node.anchors },
-        zoom: node.zoom ?? 1
+        zoom: node.zoom ?? 1,
+        pinned: [...(node.pinned ?? [])]
       };
     }
     return {
@@ -217,6 +261,11 @@ window.Layout = (() => {
       restored.zoom = typeof data?.zoom === "number" ? data.zoom : 1;
       restored.modes = data?.modes && typeof data.modes === "object" ? { ...data.modes } : {};
       restored.anchors = data?.anchors && typeof data.anchors === "object" ? { ...data.anchors } : {};
+      // Only pins for tabs that actually came back, so a pin cannot outlive its tab.
+      restored.pinned = Array.isArray(data?.pinned)
+        ? data.pinned.filter(path => restored.tabs.includes(path))
+        : [];
+      normalizePinned(restored);
       return restored;
     }
     const node = {
@@ -358,6 +407,7 @@ window.Layout = (() => {
     configure, mount, render, reset,
     panes, pane, activePane, setActive, openPaths, panesShowing,
     addTab, closeTab, removePane, split, moveTab,
+    setPinned, isPinned,
     serialize, restore,
     dropZone, applyDrop,
     get root() { return root; },

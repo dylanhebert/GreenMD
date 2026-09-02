@@ -115,19 +115,155 @@ window.Workspace = (() => {
     return workspaces.flatMap(w => w.entries.filter(e => !e.dir).map(e => ({ ...e, root: w.root })));
   }
 
+  // ---------- documents outside every open folder ----------
+  //
+  // A doc opened from Explorer, or from a folder that was never added, appeared nowhere
+  // in this panel at all -- it existed only as a tab and in the recent list. These list
+  // them, grouped by the folder they actually live in, because that grouping is also the
+  // answer to "which folder should I add?": each group offers to become one.
+
+  const BACKSLASH = String.fromCharCode(92);
+
+  function lastSeparator(path) {
+    return Math.max(path.lastIndexOf("/"), path.lastIndexOf(BACKSLASH));
+  }
+
+  function parentOf(path) {
+    const cut = lastSeparator(path);
+    return cut > 0 ? path.slice(0, cut) : "";
+  }
+
+  function baseNameOf(path) {
+    const cut = lastSeparator(path);
+    return cut >= 0 ? path.slice(cut + 1) : path;
+  }
+
+  /** Trailing separators stripped, so a root stored with one still matches. */
+  function underRoot(path, root) {
+    let stem = root.toLowerCase();
+    while (stem.length > 1 && (stem.endsWith("/") || stem.endsWith(BACKSLASH))) {
+      stem = stem.slice(0, -1);
+    }
+
+    const candidate = path.toLowerCase();
+    // The separator check matters: without it C:\docs2 counts as inside C:\docs.
+    return candidate === stem
+      || candidate.startsWith(stem + "/")
+      || candidate.startsWith(stem + BACKSLASH);
+  }
+
+  function isElsewhere(path) {
+    // An untitled note has no folder to be outside of yet.
+    if (!path || path.startsWith("untitled:")) return false;
+    return !workspaces.some(workspace => underRoot(path, workspace.root));
+  }
+
+  /** parent folder -> the open documents in it that no workspace covers. */
+  function elsewhereGroups() {
+    const groups = new Map();
+
+    for (const path of [...openPaths].sort()) {
+      if (!isElsewhere(path)) continue;
+
+      const parent = parentOf(path) || path;
+      if (!groups.has(parent)) groups.set(parent, []);
+      groups.get(parent).push(path);
+    }
+
+    return groups;
+  }
+
+  /** Cheap identity for the orphan set, so a render only happens when it moves. */
+  function elsewhereKey() {
+    return [...openPaths].filter(isElsewhere).sort().join("|");
+  }
+
+  function buildElsewhere(groups) {
+    const section = document.createElement("section");
+    // No data-root: applyWeights walks the workspaces, so this one keeps its natural
+    // height instead of competing for a share of the panel.
+    section.className = "ws-section elsewhere";
+
+    const header = document.createElement("header");
+    header.className = "ws-header";
+    header.title = "Open documents that are not inside any folder you have added";
+
+    const name = document.createElement("span");
+    name.className = "ws-name";
+    name.textContent = "Elsewhere";
+
+    const count = document.createElement("span");
+    count.className = "ws-count";
+    count.textContent = String([...groups.values()].reduce((n, list) => n + list.length, 0));
+
+    header.append(name, count);
+    section.append(header);
+
+    const tree = document.createElement("div");
+    tree.className = "tree";
+    tree.setAttribute("data-zoom-target", "");
+
+    for (const [parent, paths] of groups) {
+      const group = document.createElement("div");
+      group.className = "elsewhere-group";
+      group.title = parent;
+
+      const label = document.createElement("span");
+      label.className = "elsewhere-group-name";
+      label.textContent = baseNameOf(parent) || parent;
+
+      const adopt = document.createElement("button");
+      adopt.className = "icon-button";
+      adopt.type = "button";
+      adopt.dataset.adoptRoot = parent;
+      adopt.textContent = "+";
+      adopt.title = "Add this folder to the sidebar";
+      adopt.setAttribute("aria-label", "Add " + parent + " to the sidebar");
+
+      group.append(label, adopt);
+      tree.append(group);
+
+      for (const path of paths) {
+        const row = document.createElement("div");
+        row.className = "tree-file";
+        row.dataset.path = path;
+        row.dataset.dir = "";
+        row.style.paddingLeft = "21px";
+        row.title = path;
+
+        const rowLabel = document.createElement("span");
+        rowLabel.className = "tree-label";
+        rowLabel.textContent = baseNameOf(path);
+        row.append(rowLabel);
+
+        tree.append(row);
+      }
+    }
+
+    section.append(tree);
+    return section;
+  }
+
   // ---------- rendering ----------
 
   function render() {
     if (!sidebarEl) return;
 
-    sidebarEl.hidden = workspaces.length === 0 || !visible;
+    const groups = elsewhereGroups();
+    const empty = workspaces.length === 0 && groups.size === 0;
+
+    // The panel now earns its place with no folder open at all, as long as something
+    // is open from somewhere.
+    sidebarEl.hidden = empty || !visible;
     sectionsEl.replaceChildren();
-    if (workspaces.length === 0) return;
+    if (empty) return;
 
     workspaces.forEach((workspace, index) => {
       if (index > 0) sectionsEl.append(buildDivider(workspaces[index - 1], workspace));
       sectionsEl.append(buildSection(workspace));
     });
+
+    if (groups.size > 0) sectionsEl.append(buildElsewhere(groups));
 
     applyWeights();
 
@@ -289,6 +425,13 @@ window.Workspace = (() => {
   // ---------- interaction ----------
 
   function onSectionClick(event) {
+    const adopt = event.target.closest("[data-adopt-root]");
+    if (adopt) {
+      event.stopPropagation();
+      if (hooks.onAdoptFolder) hooks.onAdoptFolder(adopt.dataset.adoptRoot);
+      return;
+    }
+
     const close = event.target.closest("[data-close-root]");
     if (close) {
       event.stopPropagation();
@@ -334,9 +477,16 @@ window.Workspace = (() => {
 
   /** Which files are open in a tab, and which of those are in source mode. */
   function setOpenFiles(open, editing) {
+    const before = elsewhereKey();
+
     openPaths = new Set(open || []);
     editingPaths = new Set(editing || []);
-    applyCurrent();
+
+    // The Elsewhere section is built from the open set, so it has to be rebuilt when
+    // that set moves -- but only then. A render replaces every row in the panel, and
+    // doing it on every tab switch would be wasteful and would fight the tree's own
+    // scroll position.
+    if (elsewhereKey() !== before) render(); else applyCurrent();
   }
 
   /** Expands whatever is hiding a path: its section, and its parent folders. */
