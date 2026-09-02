@@ -2153,29 +2153,47 @@ function rightClickMode() {
   return event;
 }
 
-const armEvent = rightClickMode();
-check("right-clicking Edit suppresses the native menu", armEvent.defaultPrevented);
-check("the first right-click only offers, it does not discard",
-      !!contextItemByLabel("Clear all unsaved edits...")
-      && eEditor.value === SRC_EDITED,
+const menuEvent = rightClickMode();
+check("right-clicking Edit suppresses the native menu", menuEvent.defaultPrevented);
+check("it offers to clear the unsaved edits",
+      !!contextItemByLabel("Clear all unsaved edits..."),
       $$(".context-menu .menu-item").map(i => i.textContent).join("|"));
 
 contextItemByLabel("Clear all unsaved edits...")?.dispatchEvent(
   new window.MouseEvent("click", { bubbles: true }));
-check("choosing it arms rather than discards, and says so",
-      $("#statusText").textContent.includes("confirm"),
+
+check("choosing it asks first rather than discarding",
+      $("#discardPrompt").hidden === false && tabFor(E_A).classList.contains("dirty"),
+      tabFor(E_A).className);
+check("the prompt names the documents rather than just counting them",
+      ($("#discardList").textContent || "").includes("loose-a"),
+      $("#discardList").textContent);
+check("the prompt says it cannot be undone",
+      ($("#discardList").textContent || "").includes("cannot be undone"));
+
+// Escape must be the safe answer here, and must keep the work.
+key("Escape");
+check("Escape dismisses the prompt and keeps the edits",
+      $("#discardPrompt").hidden === true && tabFor(E_A).classList.contains("dirty"),
       $("#statusText").textContent);
-check("the edit is still there after arming",
-      tabFor(E_A).classList.contains("dirty"), tabFor(E_A).className);
 
 rightClickMode();
-const confirmItem = $$(".context-menu .menu-item")
-  .find(i => i.textContent.includes("click to confirm"));
-check("the second right-click asks for confirmation", !!confirmItem,
-      $$(".context-menu .menu-item").map(i => i.textContent).join("|"));
-confirmItem?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+contextItemByLabel("Clear all unsaved edits...")?.dispatchEvent(
+  new window.MouseEvent("click", { bubbles: true }));
+$("#discardCancel").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("Keep editing also keeps the edits",
+      $("#discardPrompt").hidden === true && tabFor(E_A).classList.contains("dirty"));
+
+rightClickMode();
+contextItemByLabel("Clear all unsaved edits...")?.dispatchEvent(
+  new window.MouseEvent("click", { bubbles: true }));
+$("#discardConfirm").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 check("confirming clears the unsaved edit",
       !tabFor(E_A)?.classList.contains("dirty"), tabFor(E_A)?.className);
+check("the prompt closes once it has acted", $("#discardPrompt").hidden === true);
+check("clearing asks the host for the file's text back",
+      posted.filter(m => m.type === "get-text").pop()?.payload === E_A,
+      String(posted.filter(m => m.type === "get-text").pop()?.payload));
 
 // --- report ---
 console.log("");

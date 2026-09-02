@@ -1585,50 +1585,93 @@ function openTabContextMenu(event, paneId, path) {
 /**
  * Right-clicking the Edit button offers to throw this pane's unsaved edits away.
  *
- * Two steps on purpose. Discarding an edit without asking is the one thing this app is
- * built not to do -- it is why closing a dirty tab keeps the tab -- and this menu opens
- * a few pixels from a button people click all day.
+ * The offer is a menu item and the decision is a dialog. Discarding an edit without
+ * asking is the one thing this app is built not to do -- it is why closing a dirty tab
+ * keeps the tab open -- and this menu opens a few pixels from a button people press all
+ * day. An earlier version armed on the first right-click and confirmed on the second,
+ * which is safe but makes you hunt for the same target twice to say one thing.
  */
 function openDiscardMenu(event, pane) {
   closeTabContextMenu();
 
   const dirty = pane.tabs.filter(path => Editor.isDirty(pane.id, path));
 
-  // An arm that outlived the edits it was aimed at would offer a one-click discard days
-  // later, on whatever happens to be unsaved by then.
-  if (dirty.length === 0) discardArmed = null;
-
   const menu = document.createElement("div");
   menu.className = "context-menu";
 
-  if (discardArmed === pane.id) {
-    menu.append(contextItem("Discard " + dirty.length + " unsaved edit"
-      + (dirty.length === 1 ? "" : "s") + " — click to confirm", {
-      run: () => {
-        for (const path of dirty) Editor.forget(pane.id, path);
-        discardArmed = null;
-        post("get-text", pane.active);
-        renderAll({ keepAnchors: true });
-        statusTextEl.textContent = "Discarded unsaved edits in this pane.";
-      }
-    }));
-  } else {
-    menu.append(contextItem("Clear all unsaved edits...", {
-      unavailable: dirty.length ? null : "Nothing unsaved in this pane.",
-      run: () => {
-        discardArmed = pane.id;
-        statusTextEl.textContent =
-          "Right-click Edit again to confirm discarding " + dirty.length + " unsaved edit"
-          + (dirty.length === 1 ? "" : "s") + ".";
-      }
-    }));
-  }
+  menu.append(contextItem("Clear all unsaved edits...", {
+    unavailable: dirty.length ? null : "Nothing unsaved in this pane.",
+    run: () => showDiscardPrompt(pane, dirty)
+  }));
 
   placeContextMenu(menu, event);
 }
 
-/** Which pane has an armed discard, so the second right-click is the confirmation. */
-let discardArmed = null;
+const discardPromptEl = document.getElementById("discardPrompt");
+
+/** The pane a shown prompt belongs to, and the paths it will discard. */
+let discardTarget = null;
+
+function showDiscardPrompt(pane, dirty) {
+  discardTarget = { paneId: pane.id, paths: [...dirty] };
+
+  const list = document.getElementById("discardList");
+  list.replaceChildren();
+
+  const lead = document.createElement("div");
+  lead.textContent = dirty.length === 1
+    ? "One document has edits that have not been saved:"
+    : dirty.length + " documents have edits that have not been saved:";
+  list.append(lead);
+
+  // Named rather than counted: "discard 3 edits" is not enough to decide with.
+  for (const path of dirty) {
+    const row = document.createElement("div");
+    row.className = "exit-file";
+    row.textContent = tabDisplayName(path);
+    row.title = path;
+    list.append(row);
+  }
+
+  const warning = document.createElement("div");
+  warning.textContent = "This cannot be undone.";
+  list.append(warning);
+
+  discardPromptEl.hidden = false;
+  document.getElementById("discardCancel").focus();
+}
+
+function closeDiscardPrompt() {
+  discardPromptEl.hidden = true;
+  discardTarget = null;
+}
+
+document.getElementById("discardCancel").addEventListener("click", () => {
+  closeDiscardPrompt();
+  statusTextEl.textContent = "Kept your unsaved edits.";
+});
+
+discardPromptEl.addEventListener("mousedown", event => {
+  if (event.target === discardPromptEl) closeDiscardPrompt();
+});
+
+document.getElementById("discardConfirm").addEventListener("click", () => {
+  if (!discardTarget) return;
+
+  const { paneId, paths } = discardTarget;
+  closeDiscardPrompt();
+
+  for (const path of paths) Editor.forget(paneId, path);
+
+  // The buffers are gone, so the editor needs the file's text back rather than being
+  // left showing edits it no longer holds.
+  const pane = Layout.pane(paneId);
+  if (pane && pane.active) post("get-text", pane.active);
+
+  renderAll({ keepAnchors: true });
+  statusTextEl.textContent = "Discarded unsaved edits in "
+    + paths.length + (paths.length === 1 ? " document." : " documents.");
+});
 
 function placeContextMenu(menu, event) {
   menu.addEventListener("mouseleave", () => {
@@ -2192,6 +2235,15 @@ document.addEventListener("keydown", (event) => {
   // The overlay handles its own keys; Escape closes it from anywhere.
   if (Workspace.isQuickOpen()) {
     if (event.key === "Escape") Workspace.closeQuick();
+    return;
+  }
+
+  // Ahead of the others: it is the only dialog where dismissing is the safe answer, so
+  // Escape must reach it rather than being swallowed by whatever is also open.
+  if (event.key === "Escape" && !discardPromptEl.hidden) {
+    event.preventDefault();
+    closeDiscardPrompt();
+    statusTextEl.textContent = "Kept your unsaved edits.";
     return;
   }
 
