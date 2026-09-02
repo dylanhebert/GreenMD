@@ -337,6 +337,27 @@ function paintDoc(pane) {
   }
 }
 
+/**
+ * One tab indicator. The glyph is a literal character rather than a CSS escape: an
+ * escape sequence in these files has been mangled by tooling before, and the changed
+ * dot is drawn in CSS anyway so it carries no glyph at all.
+ */
+function tabMark(kind, glyph, on) {
+  const mark = document.createElement("span");
+  mark.className = "tab-mark tab-mark-" + kind;
+  mark.dataset.mark = kind;
+  mark.textContent = glyph;
+  mark.hidden = !on;
+  mark.setAttribute("aria-hidden", "true");
+  return mark;
+}
+
+/** Shows or hides one indicator on an already-built tab. */
+function setTabMark(tab, kind, on) {
+  const mark = tab.querySelector('[data-mark="' + kind + '"]');
+  if (mark) mark.hidden = !on;
+}
+
 function buildTabstrip(pane) {
   const strip = document.createElement("div");
   strip.className = "tabstrip";
@@ -356,7 +377,19 @@ function buildTabstrip(pane) {
     const label = document.createElement("span");
     label.className = "tab-label";
     label.textContent = doc ? doc.title : path.split(/[\\/]/).pop();
-    tab.append(label);
+
+    // Indicators are siblings of the label, never painted onto it. The label is the box
+    // that truncates, so anything at its trailing edge is cut off by exactly the long
+    // filename that makes the indicator worth showing -- and a single ::after cannot
+    // carry two states, so `changed` and `editing` used to silently overwrite each
+    // other. Kept in the DOM and hidden rather than added and removed, so the two
+    // places that toggle these states after a build only have to flip a flag.
+    tab.append(
+      tabMark("dirty", "●", Editor.isDirty(pane.id, path)),
+      label,
+      tabMark("changed", "", changeMarksVisible && changeMarks.has(path)),
+      tabMark("editing", "✎", modeOf(pane, path) === "edit")
+    );
 
     const close = document.createElement("button");
     close.className = "tab-close";
@@ -777,7 +810,11 @@ function refreshDirtyMarks() {
     for (const path of pane.tabs) {
       const tab = panesEl.querySelector(
         `[data-pane-id="${CSS.escape(pane.id)}"] [data-path="${CSS.escape(path)}"]`);
-      if (tab) tab.classList.toggle("dirty", Editor.isDirty(pane.id, path));
+      if (!tab) continue;
+
+      const dirty = Editor.isDirty(pane.id, path);
+      tab.classList.toggle("dirty", dirty);
+      setTabMark(tab, "dirty", dirty);
     }
   }
 }
@@ -1018,7 +1055,11 @@ function refreshChangedDots() {
     for (const path of pane.tabs) {
       const tab = panesEl.querySelector(
         `[data-pane-id="${CSS.escape(pane.id)}"] [data-path="${CSS.escape(path)}"]`);
-      if (tab) tab.classList.toggle("changed", changeMarksVisible && changeMarks.has(path));
+      if (!tab) continue;
+
+      const changed = changeMarksVisible && changeMarks.has(path);
+      tab.classList.toggle("changed", changed);
+      setTabMark(tab, "changed", changed);
     }
   }
 }

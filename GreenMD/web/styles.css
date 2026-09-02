@@ -202,19 +202,41 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .tab.active { color: var(--text); background: var(--bg); border-bottom-color: var(--live); }
 .tab.missing .tab-label { text-decoration: line-through; color: #b06a6a; }
 
-.tab-label { overflow: hidden; text-overflow: ellipsis; }
+.tab-label { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/*
+ * Indicators are siblings of the label rather than pseudo-elements on it, for two
+ * reasons that both cost real information.
+ *
+ * The label is the box that truncates -- overflow:hidden plus text-overflow:ellipsis --
+ * so anything painted at its trailing edge is clipped by exactly the long filename that
+ * makes an indicator worth showing. The dirty bullet escaped only because it happened
+ * to be ::before rather than ::after.
+ *
+ * And an element has one ::after. `changed` and `editing` both claimed it at equal
+ * specificity, so the later rule won outright: a tab in source mode could never show
+ * the amber dot, with no truncation involved at all.
+ *
+ * Kept in the DOM and toggled with `hidden`, so the two places that flip these states
+ * after a strip is built do not have to add and remove nodes.
+ */
+.tab-mark {
+  display: inline-block;
+  flex: 0 0 auto;
+  line-height: 1;
+}
+.tab-mark[hidden] { display: none; }
+
+.tab-mark-dirty,
+.tab-mark-editing { color: var(--live); }
 
 /* Uncleared change marks: the dot stays -- through clicks and re-renders -- until
    the marks are dismissed. Amber, the same language as the marks themselves. */
-.tab.changed .tab-label::after {
-  content: "";
-  display: inline-block;
+.tab-mark-changed {
   width: 6px;
   height: 6px;
-  margin-left: 7px;
   border-radius: 50%;
   background: var(--changed);
-  vertical-align: middle;
 }
 
 .tab-close {
@@ -852,19 +874,9 @@ mark.find-current {
 .mode-button:hover { color: var(--text); border-color: var(--border-strong); }
 .mode-button.editing { color: var(--live); border-color: #2a4d43; }
 
-/* A literal bullet, not a CSS escape -- an escape sequence here was mangled
-   once already by the tooling that wrote this file. */
-.tab.dirty .tab-label::before {
-  content: "● ";
-  color: var(--live);
-}
-
-/* Editing is shown whether or not there are unsaved changes -- knowing a tab is in
-   source mode matters even when it is clean. */
-.tab.editing .tab-label::after {
-  content: " ✎";
-  color: var(--live);
-}
+/* The dirty bullet and the edit pencil are literal characters set as text on their own
+   elements now -- see .tab-mark. Editing is shown whether or not there are unsaved
+   changes: knowing a tab is in source mode matters even when it is clean. */
 .tab.editing { border-bottom-color: #2a4d43; }
 
 .dochead-unsaved {

@@ -1797,6 +1797,61 @@ check("re-enabling change marks brings the dot back",
       tabFor(MARK).classList.contains("changed"));
 key("m", { ctrlKey: true });
 
+// --- tab indicators: unclippable, and able to coexist ---
+// All three lived on .tab-label as ::before/::after. That box carries overflow:hidden
+// and text-overflow:ellipsis, so the two trailing ones -- the amber changed dot and the
+// edit pencil -- were cut off by exactly the truncation that makes a long filename need
+// them. The dirty bullet survived only because it happened to be ::before rather than
+// ::after. And both `changed` and `editing` targeted the one ::after at equal
+// specificity, so the later rule won and a tab in edit mode could never show the changed
+// dot at all, truncation or not. They are real sibling elements now.
+const labelRule = cssText.match(/^\.tab-label\s*\{[^}]*\}/m)?.[0] ?? "";
+check("the tab label is still the box that truncates",
+      /overflow:\s*hidden/.test(labelRule) && /text-overflow:\s*ellipsis/.test(labelRule),
+      labelRule.replace(/\s+/g, " "));
+check("no indicator is painted as a pseudo-element on the truncating label",
+      !/\.tab-label::(before|after)/.test(cssText),
+      (cssText.match(/[^\n{]*\.tab-label::(before|after)/g) || []).join(" | "));
+
+// Drive all three states onto one tab through the real machinery, not by hand.
+// Toggling Ctrl+E blindly is what a first draft of this did, and it turned edit mode
+// *off* -- MARK is already in source mode by this point in the suite. Assert into the
+// state wanted rather than assuming the state arrived in.
+tabFor(MARK).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+if (!tabFor(MARK).classList.contains("editing")) key("e", { ctrlKey: true });
+check("MARK is in source mode for the indicator checks",
+      tabFor(MARK).classList.contains("editing"), tabFor(MARK).className);
+send("doc-text", { path: MARK, text: SRC_CLEAN });
+const indEditor = tabFor(MARK).closest(".pane").querySelector("textarea.editor");
+indEditor.value = SRC_EDITED;
+indEditor.dispatchEvent(new window.Event("input", { bubbles: true }));
+send("doc-updated", markPayload('<h1 id="w">W</h1><p>all three at once</p>'));
+
+const indTab = tabFor(MARK);
+const shownMarks = t => [...t.querySelectorAll(".tab-mark")].filter(m => !m.hidden);
+
+check("one tab can be dirty, changed and editing at the same time",
+      indTab.classList.contains("dirty")
+      && indTab.classList.contains("changed")
+      && indTab.classList.contains("editing"),
+      indTab.className);
+check("each live state gets its own indicator element",
+      shownMarks(indTab).length === 3,
+      shownMarks(indTab).length + " shown of "
+        + indTab.querySelectorAll(".tab-mark").length);
+check("indicators sit outside the label, so truncation cannot eat them",
+      shownMarks(indTab).length > 0
+      && shownMarks(indTab).every(m => !m.closest(".tab-label")));
+check("the label itself carries no indicator text",
+      !/[●✎]/.test(indTab.querySelector(".tab-label")?.textContent ?? ""),
+      indTab.querySelector(".tab-label")?.textContent);
+
+// Clearing a state hides its indicator rather than leaving a stale one behind.
+key("m", { ctrlKey: true });
+check("dismissing the marks hides the changed indicator",
+      shownMarks(tabFor(MARK)).length === 2,
+      shownMarks(tabFor(MARK)).map(m => m.className).join(" | "));
+
 // --- report ---
 console.log("");
 for (const r of results) {
