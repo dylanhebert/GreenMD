@@ -562,6 +562,22 @@ check("rendered view hides while editing", $(".pane .doc")?.hidden === true);
 check("entering edit mode requests the source",
       posted.filter(m => m.type === "get-text").length === beforeText + 1);
 
+// The header is rebuilt on every mode toggle, and buildHeader used to hardcode the
+// button's text, so applyMode set it correctly and the rebuild immediately overwrote
+// it. The button read "Edit" while the pane was demonstrably in source mode.
+check("the mode button says Editing once it is",
+      $(".pane .mode-button")?.textContent === "Editing",
+      $(".pane .mode-button")?.textContent);
+check("the mode button is marked as editing",
+      $(".pane .mode-button")?.classList.contains("editing"),
+      $(".pane .mode-button")?.className);
+
+// A rebuild for an unrelated reason must not lose it either.
+send("doc-updated", editDoc("rebuild while editing"));
+check("the mode button survives a header rebuild",
+      $(".pane .mode-button")?.textContent === "Editing",
+      $(".pane .mode-button")?.textContent);
+
 send("doc-text", { path: EDIT_PATH, text: SRC_CLEAN });
 check("editor receives the source", $(".pane .editor")?.value === SRC_CLEAN,
       JSON.stringify($(".pane .editor")?.value));
@@ -748,7 +764,21 @@ send("workspace", { workspaces: [
 
 check("one section per folder", $$(".ws-section:not(.elsewhere)").length === 2,
       `${$$(".ws-section:not(.elsewhere)").length} sections`);
-check("a divider sits between them", $$(".ws-divider").length === 1);
+// Asserted on the panel's actual child order rather than a divider count: Elsewhere
+// brings its own divider when it is present, so a bare count says nothing about
+// whether the one between the two folders is there.
+const sectionOrder = () =>
+  [...$("#workspaceSections").children].map(child =>
+    child.classList.contains("ws-divider") ? "divider"
+      : child.classList.contains("elsewhere") ? "elsewhere" : "folder");
+
+check("a divider sits between the folder sections",
+      sectionOrder().slice(0, 3).join(",") === "folder,divider,folder",
+      sectionOrder().join(","));
+check("Elsewhere, when present, is last and has a divider above it",
+      !sectionOrder().includes("elsewhere")
+      || sectionOrder().slice(-2).join(",") === "divider,elsewhere",
+      sectionOrder().join(","));
 check("sections are named", $$(".ws-section:not(.elsewhere) .ws-name").map(n => n.textContent).join(",") === "alpha,beta",
       $$(".ws-section:not(.elsewhere) .ws-name").map(n => n.textContent).join(","));
 check("each section shows its file count",
@@ -2040,6 +2070,49 @@ check("a real ancestor folder does cover them",
       !elsewhereRows().includes(E_A) && !elsewhereRows().includes(E_B),
       elsewhereRows().join(" | "));
 
+// --- Elsewhere is resizable ---
+// It sits outside the folder sections' weight system: it has no root to key a weight
+// by, it vanishes when nothing is open from outside a folder, and it is usually three
+// rows, so a share of the panel is the wrong unit. It gets an explicit height instead.
+send("workspace", { workspaces: [{
+  root: E_ROOT, name: "adopted", truncated: false,
+  entries: [{ path: E_IN, name: "inside.md", parent: E_ROOT, dir: false }]
+}] });
+
+const elsewhereSection = () => $(".ws-section.elsewhere");
+const elsewhereDivider = () =>
+  [...$("#workspaceSections").children]
+    .find((c, i, all) => c.classList.contains("ws-divider")
+      && all[i + 1]?.classList.contains("elsewhere"));
+
+check("Elsewhere has its own divider when a folder sits above it",
+      !!elsewhereDivider());
+check("it starts at its natural height",
+      elsewhereSection()?.style.flex === "0 0 auto",
+      elsewhereSection()?.style.flex);
+
+// jsdom reports zero-height boxes, so the drag clamps to the minimum rather than
+// tracking the pointer. What is testable is that dragging assigns an explicit height
+// at all, and that double-clicking gives the automatic one back.
+elsewhereDivider()?.dispatchEvent(
+  new window.MouseEvent("mousedown", { bubbles: true, clientY: 400 }));
+window.document.dispatchEvent(
+  new window.MouseEvent("mousemove", { bubbles: true, clientY: 200 }));
+window.document.dispatchEvent(new window.MouseEvent("mouseup", { bubbles: true }));
+
+check("dragging gives it an explicit pixel height",
+      /^0 0 \d+px$/.test(elsewhereSection()?.style.flex || ""),
+      elsewhereSection()?.style.flex);
+check("the dragged height is persisted with the session",
+      typeof window.eval("Workspace.elsewhereSize()") === "number",
+      String(window.eval("Workspace.elsewhereSize()")));
+
+elsewhereDivider()?.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
+check("double-clicking the divider restores the automatic height",
+      elsewhereSection()?.style.flex === "0 0 auto"
+      && window.eval("Workspace.elsewhereSize()") === null,
+      elsewhereSection()?.style.flex);
+
 // --- Files panel: names without .md, and markers that cannot be clipped ---
 send("workspace", { workspaces: [{
   root: E_DIR, name: "notes", truncated: false,
@@ -2155,11 +2228,11 @@ function rightClickMode() {
 
 const menuEvent = rightClickMode();
 check("right-clicking Edit suppresses the native menu", menuEvent.defaultPrevented);
-check("it offers to clear the unsaved edits",
-      !!contextItemByLabel("Clear all unsaved edits..."),
+check("it offers to clear this document's unsaved edits",
+      !!contextItemByLabel("Clear unsaved edits..."),
       $$(".context-menu .menu-item").map(i => i.textContent).join("|"));
 
-contextItemByLabel("Clear all unsaved edits...")?.dispatchEvent(
+contextItemByLabel("Clear unsaved edits...")?.dispatchEvent(
   new window.MouseEvent("click", { bubbles: true }));
 
 check("choosing it asks first rather than discarding",
@@ -2178,18 +2251,37 @@ check("Escape dismisses the prompt and keeps the edits",
       $("#statusText").textContent);
 
 rightClickMode();
-contextItemByLabel("Clear all unsaved edits...")?.dispatchEvent(
+contextItemByLabel("Clear unsaved edits...")?.dispatchEvent(
   new window.MouseEvent("click", { bubbles: true }));
 $("#discardCancel").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 check("Keep editing also keeps the edits",
       $("#discardPrompt").hidden === true && tabFor(E_A).classList.contains("dirty"));
 
+// Scope: this document only. A second unsaved file in the same pane must survive --
+// throwing away work in several files from one click is regretted exactly once.
+tabFor(E_B).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+key("e", { ctrlKey: true });
+send("doc-text", { path: E_B, text: SRC_CLEAN });
+const bEditor = tabFor(E_B).closest(".pane").querySelector("textarea.editor");
+bEditor.value = SRC_MINE;
+bEditor.dispatchEvent(new window.Event("input", { bubbles: true }));
+check("both documents are now unsaved",
+      tabFor(E_A).classList.contains("dirty") && tabFor(E_B).classList.contains("dirty"));
+
+// Back to E_A and discard from there.
+tabFor(E_A).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 rightClickMode();
-contextItemByLabel("Clear all unsaved edits...")?.dispatchEvent(
+contextItemByLabel("Clear unsaved edits...")?.dispatchEvent(
   new window.MouseEvent("click", { bubbles: true }));
+check("the prompt names only the active document",
+      ($("#discardList").textContent || "").includes("loose-a")
+      && !($("#discardList").textContent || "").includes("loose-b"),
+      $("#discardList").textContent);
 $("#discardConfirm").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 check("confirming clears the unsaved edit",
       !tabFor(E_A)?.classList.contains("dirty"), tabFor(E_A)?.className);
+check("the other document's unsaved edits are untouched",
+      tabFor(E_B)?.classList.contains("dirty"), tabFor(E_B)?.className);
 check("the prompt closes once it has acted", $("#discardPrompt").hidden === true);
 check("clearing asks the host for the file's text back",
       posted.filter(m => m.type === "get-text").pop()?.payload === E_A,

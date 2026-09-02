@@ -255,7 +255,11 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
  * natural height rather than a share of the panel -- it is usually two or three rows,
  * and the folder trees are what the space is for.
  */
-.ws-section.elsewhere { flex: 0 0 auto; }
+/* Natural height by default; an inline flex-basis takes over once it has been dragged.
+   min-height:0 and a scrolling tree so a dragged-smaller section clips rather than
+   pushing the folder trees off the panel. */
+.ws-section.elsewhere { flex: 0 0 auto; min-height: 0; }
+.ws-section.elsewhere .tree { overflow-y: auto; padding-bottom: 6px; }
 
 .elsewhere-group {
   display: flex;

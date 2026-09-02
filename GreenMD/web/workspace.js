@@ -28,6 +28,16 @@ window.Workspace = (() => {
   /** root -> flex weight. Relative, so a split survives a window resize. */
   let weights = new Map();
 
+  /**
+   * Elsewhere's height in pixels, or null for "as tall as its contents".
+   *
+   * Pixels rather than a share of the panel like the folder sections use. It has no
+   * root to key a weight by, it disappears entirely when nothing is open from outside
+   * a folder, and it is usually three rows -- a proportion of the panel is the wrong
+   * unit for something whose natural size is "small and specific".
+   */
+  let elsewhereHeight = null;
+
   let visible = true;
 
   /** The file the active pane is showing. Owned here so a rebuild cannot lose it. */
@@ -106,6 +116,11 @@ window.Workspace = (() => {
 
   function collapsedRoots() { return [...collapsed]; }
   function setCollapsedRoots(list) { collapsed = new Set(list || []); }
+
+  function elsewhereSize() { return elsewhereHeight; }
+  function setElsewhereSize(px) {
+    elsewhereHeight = typeof px === "number" && px > 0 ? px : null;
+  }
 
   function sectionWeights() { return Object.fromEntries(weights); }
   function setSectionWeights(map) {
@@ -289,9 +304,14 @@ window.Workspace = (() => {
       sectionsEl.append(buildSection(workspace));
     });
 
-    if (groups.size > 0) sectionsEl.append(buildElsewhere(groups));
+    if (groups.size > 0) {
+      // Only draggable when there is something above to take the space from.
+      if (workspaces.length > 0) sectionsEl.append(buildElsewhereDivider());
+      sectionsEl.append(buildElsewhere(groups));
+    }
 
     applyWeights();
+    applyElsewhereHeight();
 
     // render() replaces every row, so the marker is reapplied here rather than only
     // when the active document changes.
@@ -385,6 +405,69 @@ window.Workspace = (() => {
 
       if (entry.dir && expanded.has(entry.path)) build(workspace, entry.path, depth + 1, container);
     }
+  }
+
+  function elsewhereElement() {
+    return sectionsEl ? sectionsEl.querySelector(".ws-section.elsewhere") : null;
+  }
+
+  function applyElsewhereHeight() {
+    const section = elsewhereElement();
+    if (!section) return;
+
+    section.style.flex = elsewhereHeight === null
+      ? "0 0 auto"
+      : "0 0 " + Math.round(elsewhereHeight) + "px";
+  }
+
+  function buildElsewhereDivider() {
+    const divider = document.createElement("div");
+    divider.className = "ws-divider";
+    divider.title = "Drag to resize, double-click to fit the contents";
+    divider.addEventListener("mousedown", beginElsewhereDrag);
+
+    // An explicit way back to auto: once dragged, there is otherwise no gesture that
+    // returns it to "just as tall as it needs to be".
+    divider.addEventListener("dblclick", () => {
+      elsewhereHeight = null;
+      applyElsewhereHeight();
+      if (hooks.onChanged) hooks.onChanged();
+    });
+
+    return divider;
+  }
+
+  /** Dragging up grows Elsewhere, since it sits below the divider. */
+  function beginElsewhereDrag(event) {
+    event.preventDefault();
+
+    const section = elsewhereElement();
+    if (!section) return;
+
+    const startY = event.clientY;
+    const startHeight = section.getBoundingClientRect().height;
+    const panel = sectionsEl.getBoundingClientRect().height;
+
+    document.body.classList.add("resizing-row");
+
+    function onMove(moveEvent) {
+      const wanted = startHeight - (moveEvent.clientY - startY);
+      // Leaves at least one folder section's minimum above it, so a drag to the top
+      // cannot squeeze the trees out of existence.
+      const ceiling = Math.max(MIN_SECTION_PX, panel - MIN_SECTION_PX);
+      elsewhereHeight = Math.min(ceiling, Math.max(MIN_SECTION_PX, wanted));
+      applyElsewhereHeight();
+    }
+
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.classList.remove("resizing-row");
+      if (hooks.onChanged) hooks.onChanged();
+    }
+
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
   }
 
   function buildDivider(above, below) {
@@ -724,6 +807,7 @@ window.Workspace = (() => {
     expandedPaths, setExpanded,
     collapsedRoots, setCollapsedRoots,
     sectionWeights, setSectionWeights,
+    elsewhereSize, setElsewhereSize,
     highlight, setOpenFiles, currentFile: () => currentPath,
     openQuick, closeQuick, isQuickOpen
   };

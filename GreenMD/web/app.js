@@ -580,11 +580,16 @@ function buildHeader(pane) {
   updated.dataset.updated = doc ? doc.loadedAt : "";
   updated.textContent = doc && doc.loadedAt ? "updated " + relativeTime(doc.loadedAt) : "";
 
+  // Built from the pane's actual mode, not a default. The header is replaced on every
+  // toggle, so a hardcoded "Edit" here silently overwrote what applyMode had just set
+  // and the button read Edit while the pane was plainly in source mode.
+  const editingNow = !!pane.active && modeOf(pane, pane.active) === "edit";
+
   const mode = document.createElement("button");
-  mode.className = "mode-button";
+  mode.className = "mode-button" + (editingNow ? " editing" : "");
   mode.type = "button";
-  mode.textContent = "Edit";
-  mode.title = "Toggle source editing (Ctrl+E)";
+  mode.textContent = editingNow ? "Editing" : "Edit";
+  mode.title = "Toggle source editing (Ctrl+E). Right-click to clear unsaved edits.";
   mode.addEventListener("click", () => { Layout.setActive(pane.id); toggleMode(pane); });
 
   // Right-click offers to throw the unsaved edits away. It confirms first, and that is
@@ -1594,14 +1599,18 @@ function openTabContextMenu(event, paneId, path) {
 function openDiscardMenu(event, pane) {
   closeTabContextMenu();
 
-  const dirty = pane.tabs.filter(path => Editor.isDirty(pane.id, path));
+  // This document only, never the pane's other unsaved buffers. Throwing away work in
+  // several files from one menu click is the kind of convenience you regret exactly
+  // once, and the button you right-clicked belongs to the document in front of you.
+  const path = pane.active;
+  const dirty = !!path && Editor.isDirty(pane.id, path);
 
   const menu = document.createElement("div");
   menu.className = "context-menu";
 
-  menu.append(contextItem("Clear all unsaved edits...", {
-    unavailable: dirty.length ? null : "Nothing unsaved in this pane.",
-    run: () => showDiscardPrompt(pane, dirty)
+  menu.append(contextItem("Clear unsaved edits...", {
+    unavailable: dirty ? null : "Nothing unsaved in this document.",
+    run: () => showDiscardPrompt(pane, [path])
   }));
 
   placeContextMenu(menu, event);
@@ -1619,12 +1628,10 @@ function showDiscardPrompt(pane, dirty) {
   list.replaceChildren();
 
   const lead = document.createElement("div");
-  lead.textContent = dirty.length === 1
-    ? "One document has edits that have not been saved:"
-    : dirty.length + " documents have edits that have not been saved:";
+  lead.textContent = "Unsaved edits in this document will be thrown away:";
   list.append(lead);
 
-  // Named rather than counted: "discard 3 edits" is not enough to decide with.
+  // Named rather than counted, so the dialog says what it is about to act on.
   for (const path of dirty) {
     const row = document.createElement("div");
     row.className = "exit-file";
@@ -1669,8 +1676,7 @@ document.getElementById("discardConfirm").addEventListener("click", () => {
   if (pane && pane.active) post("get-text", pane.active);
 
   renderAll({ keepAnchors: true });
-  statusTextEl.textContent = "Discarded unsaved edits in "
-    + paths.length + (paths.length === 1 ? " document." : " documents.");
+  statusTextEl.textContent = "Discarded unsaved edits in " + tabDisplayName(paths[0]) + ".";
 });
 
 function placeContextMenu(menu, event) {
@@ -1822,6 +1828,7 @@ function restoreSession(state) {
   if (Array.isArray(state.expanded)) Workspace.setExpanded(state.expanded);
   if (Array.isArray(state.collapsedRoots)) Workspace.setCollapsedRoots(state.collapsedRoots);
   if (state.sectionWeights) Workspace.setSectionWeights(state.sectionWeights);
+  if (typeof state.elsewhereHeight === "number") Workspace.setElsewhereSize(state.elsewhereHeight);
 
   if (state.layout) Layout.restore(state.layout);
 
@@ -1851,6 +1858,7 @@ function saveSession() {
       expanded: Workspace.expandedPaths(),
       collapsedRoots: Workspace.collapsedRoots(),
       sectionWeights: Workspace.sectionWeights(),
+      elsewhereHeight: Workspace.elsewhereSize(),
       panels: Panels.snapshot(),
       recents,
       changeMarksVisible,
