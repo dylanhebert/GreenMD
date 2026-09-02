@@ -372,10 +372,10 @@ check("closing every folder leaves the Elsewhere list standing",
 check("no folder sections remain",
       $$(".ws-section:not(.elsewhere)").length === 0);
 
-window.eval("Workspace.setOpenFiles([], [])");
+window.eval("Workspace.setOpenFiles({})");
 check("with no folders and nothing open, the panel hides",
       $("#sidebar").hidden === true);
-window.eval("Workspace.setOpenFiles(Layout.openPaths(), [])");
+window.eval("Workspace.setOpenFiles({ open: Layout.openPaths() })");
 
 window.eval("Workspace.openQuick(['C:" + SEP + SEP + "docs" + SEP + SEP + "alpha.md'])");
 check("quick open falls back to recents", $("#quickOpen").hidden === false);
@@ -2085,6 +2085,97 @@ check("a pinned document is marked in the Files panel too",
 check("an unpinned neighbour is not marked",
       !treeRowFor(E_B)?.classList.contains("pinned"),
       treeRowFor(E_B)?.className);
+
+// --- every tab marker also reaches the Files panel ---
+// The reported gap: an unsaved edit put a bullet on the tab and nothing at all on the
+// file's row. The panel knew about open/current/editing/pinned and nothing else.
+const rowFor = path => $$(".ws-section .tree-file").find(r => r.dataset.path === path);
+const shownRowMarks = path =>
+  [...(rowFor(path)?.querySelectorAll(".tree-mark") ?? [])]
+    .filter(m => !m.hidden).map(m => m.dataset.mark);
+
+send("workspace", { workspaces: [{
+  root: E_DIR, name: "notes", truncated: false,
+  entries: [
+    { path: E_A, name: "loose-a.md", parent: E_DIR, dir: false },
+    { path: E_B, name: "loose-b.md", parent: E_DIR, dir: false }
+  ]
+}] });
+send("doc-opened", labelDoc(E_A, "loose-a.md", E_DIR));
+
+// E_A is still pinned from the pin tests above. Start from a known state rather than
+// writing the leftover into the expectations.
+rightClickTab(E_A);
+contextItemByLabel("Unpin tab")?.dispatchEvent(
+  new window.MouseEvent("click", { bubbles: true }));
+
+check("a clean file's row carries no markers", shownRowMarks(E_A).length === 0,
+      shownRowMarks(E_A).join(","));
+
+// Unsaved edit: this is the exact case that showed on the tab and not the row.
+key("e", { ctrlKey: true });
+send("doc-text", { path: E_A, text: SRC_CLEAN });
+const eEditor = tabFor(E_A).closest(".pane").querySelector("textarea.editor");
+eEditor.value = SRC_EDITED;
+eEditor.dispatchEvent(new window.Event("input", { bubbles: true }));
+
+check("an unsaved edit marks the file's row, not just its tab",
+      shownRowMarks(E_A).includes("dirty"), shownRowMarks(E_A).join(","));
+check("source mode marks the row too", shownRowMarks(E_A).includes("editing"),
+      shownRowMarks(E_A).join(","));
+check("the untouched neighbour stays unmarked", shownRowMarks(E_B).length === 0,
+      shownRowMarks(E_B).join(","));
+
+// A change landing from outside must reach the row as well. The html has to actually
+// differ: change marks come from diffing the render against the last-seen one, so
+// re-sending identical html produces no marks and would have proved nothing.
+send("doc-updated", {
+  path: E_A, title: "loose-a.md", folder: E_DIR,
+  html: '<h1 id="l">loose-a.md</h1><p>rewritten from outside</p>',
+  outline: [{ level: 1, text: "loose-a.md", id: "l" }],
+  missing: false, loadedAt: new Date().toISOString()
+});
+check("an unseen change marks the file's row",
+      shownRowMarks(E_A).includes("changed"), shownRowMarks(E_A).join(","));
+check("the tab and the row agree on which markers are live",
+      [...tabFor(E_A).querySelectorAll(".tab-mark")].filter(m => !m.hidden)
+        .map(m => m.dataset.mark).sort().join(",")
+      === shownRowMarks(E_A).filter(m => m !== "pinned").sort().join(","),
+      "tab: " + [...tabFor(E_A).querySelectorAll(".tab-mark")].filter(m => !m.hidden)
+        .map(m => m.dataset.mark).sort().join(",")
+      + "  row: " + shownRowMarks(E_A).join(","));
+
+// --- clearing unsaved edits takes two clicks ---
+const modeButton = () => tabFor(E_A).closest(".pane").querySelector(".mode-button");
+function rightClickMode() {
+  const event = new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  modeButton().dispatchEvent(event);
+  return event;
+}
+
+const armEvent = rightClickMode();
+check("right-clicking Edit suppresses the native menu", armEvent.defaultPrevented);
+check("the first right-click only offers, it does not discard",
+      !!contextItemByLabel("Clear all unsaved edits...")
+      && eEditor.value === SRC_EDITED,
+      $$(".context-menu .menu-item").map(i => i.textContent).join("|"));
+
+contextItemByLabel("Clear all unsaved edits...")?.dispatchEvent(
+  new window.MouseEvent("click", { bubbles: true }));
+check("choosing it arms rather than discards, and says so",
+      $("#statusText").textContent.includes("confirm"),
+      $("#statusText").textContent);
+check("the edit is still there after arming",
+      tabFor(E_A).classList.contains("dirty"), tabFor(E_A).className);
+
+rightClickMode();
+const confirmItem = $$(".context-menu .menu-item")
+  .find(i => i.textContent.includes("click to confirm"));
+check("the second right-click asks for confirmation", !!confirmItem,
+      $$(".context-menu .menu-item").map(i => i.textContent).join("|"));
+confirmItem?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("confirming clears the unsaved edit",
+      !tabFor(E_A)?.classList.contains("dirty"), tabFor(E_A)?.className);
 
 // --- report ---
 console.log("");

@@ -38,6 +38,10 @@ window.Workspace = (() => {
   let editingPaths = new Set();
   let pinnedFiles = new Set();
 
+  /** Unsaved edits, and changes not yet marked as seen. Mirrors what the tabs show. */
+  let dirtyFiles = new Set();
+  let changedFiles = new Set();
+
   let hooks = {};
 
   let sidebarEl = null;
@@ -256,7 +260,7 @@ window.Workspace = (() => {
         const rowLabel = document.createElement("span");
         rowLabel.className = "tree-label";
         rowLabel.textContent = stripMd(baseNameOf(path));
-        row.append(rowLabel, rowMark("pinned", "◆"), rowMark("editing", "✎"));
+        row.append(rowLabel, rowMark("dirty", "●"), rowMark("changed", ""), rowMark("editing", "✎"), rowMark("pinned", "◆"));
 
         tree.append(row);
       }
@@ -375,7 +379,7 @@ window.Workspace = (() => {
       label.textContent = entry.dir ? entry.name : stripMd(entry.name);
       row.append(label);
 
-      if (!entry.dir) row.append(rowMark("pinned", "◆"), rowMark("editing", "✎"));
+      if (!entry.dir) row.append(rowMark("dirty", "●"), rowMark("changed", ""), rowMark("editing", "✎"), rowMark("pinned", "◆"));
 
       container.append(row);
 
@@ -497,23 +501,36 @@ window.Workspace = (() => {
       row.classList.toggle("open", path !== currentPath && openPaths.has(path));
       row.classList.toggle("editing", editingPaths.has(path));
       row.classList.toggle("pinned", pinnedFiles.has(path));
+      row.classList.toggle("dirty", dirtyFiles.has(path));
+      row.classList.toggle("changed", changedFiles.has(path));
 
       // Marks are real elements for the same reason the tab strip's are: .tree-label
       // truncates, so a marker painted at its trailing edge is clipped by exactly the
-      // long filename that makes it worth showing -- and one ::after cannot carry two
-      // states, so pinned and editing would have overwritten each other.
-      setRowMark(row, "pinned", pinnedFiles.has(path));
+      // long filename that makes it worth showing -- and one ::after cannot carry four
+      // states, so they would have overwritten each other.
+      setRowMark(row, "dirty", dirtyFiles.has(path));
+      setRowMark(row, "changed", changedFiles.has(path));
       setRowMark(row, "editing", editingPaths.has(path));
+      setRowMark(row, "pinned", pinnedFiles.has(path));
     }
   }
 
-  /** Which files are open in a tab, which are in source mode, and which are pinned. */
-  function setOpenFiles(open, editing, pinned) {
+  /**
+   * Every per-file state the panel paints, in one object.
+   *
+   * Taken as named fields rather than positional arguments because there are now five
+   * of them and a sixth is coming with workspace-wide change tracking. A call reading
+   * setOpenFiles(a, b, c, d, e) tells you nothing about which list is which.
+   */
+  function setOpenFiles(states) {
+    const next = states || {};
     const before = elsewhereKey();
 
-    openPaths = new Set(open || []);
-    editingPaths = new Set(editing || []);
-    pinnedFiles = new Set(pinned || []);
+    openPaths = new Set(next.open || []);
+    editingPaths = new Set(next.editing || []);
+    pinnedFiles = new Set(next.pinned || []);
+    dirtyFiles = new Set(next.dirty || []);
+    changedFiles = new Set(next.changed || []);
 
     // The Elsewhere section is built from the open set, so it has to be rebuilt when
     // that set moves -- but only then. A render replaces every row in the panel, and

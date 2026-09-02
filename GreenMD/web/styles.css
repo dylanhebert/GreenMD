@@ -695,10 +695,15 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
  * the long filename that makes it worth showing, and a single ::after could not carry
  * pinned and editing at once. Same fix as the tab strip, same reasons.
  */
+/*
+ * The label takes the slack and the markers ride at the right-hand edge. Done that way
+ * rather than with margin-left:auto on the markers: several auto margins in a flex row
+ * split the free space between them, so four markers would have spread themselves
+ * across the row instead of grouping. The row's own 5px gap spaces them.
+ */
 .tree-mark {
   display: inline-block;
   flex: 0 0 auto;
-  margin-left: auto;
   font-size: 11px;
   line-height: 1;
 }
@@ -707,10 +712,17 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 /* Accent, deliberately not amber or green: those already mean changed and live/dirty,
    and a third meaning on either would blur the one carrying real information. */
 .tree-mark-pinned { color: var(--accent); }
-.tree-mark-editing { color: var(--live); }
+.tree-mark-editing,
+.tree-mark-dirty { color: var(--live); }
 
-/* Two markers on one row: only the first claims the free space. */
-.tree-mark-pinned + .tree-mark-editing { margin-left: 4px; }
+/* Drawn rather than a glyph, so it matches the dot on the tab exactly. */
+.tree-mark-changed {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--changed);
+}
+
 
 .tree-caret {
   width: 1.1em;
@@ -722,7 +734,9 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 }
 .tree-dir:hover > .tree-caret,
 .ws-header:hover > .tree-caret { color: var(--text); }
-.tree-label { overflow: hidden; text-overflow: ellipsis; }
+/* flex:1 so the label takes the row's slack and pushes the markers to the right edge.
+   min-width:0 so it can actually shrink below its content instead of overflowing. */
+.tree-label { overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; min-width: 0; }
 
 .tree-note { padding: 8px 12px; font-size: .85em; color: var(--text-muted); }
 

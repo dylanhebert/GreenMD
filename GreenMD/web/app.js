@@ -389,6 +389,25 @@ function pinnedPaths() {
   return [...pinned];
 }
 
+/**
+ * Pushes every per-file state to the Files panel.
+ *
+ * One function rather than a call at each site, because the panel showing a different
+ * set of markers from the tab strip is exactly the bug this fixes: a file edited but
+ * not saved had a bullet on its tab and nothing at all on its row.
+ */
+function syncFileStates() {
+  const open = Layout.openPaths();
+
+  Workspace.setOpenFiles({
+    open,
+    editing: editingPaths(),
+    pinned: pinnedPaths(),
+    dirty: open.filter(path => Editor.isPathDirty(path)),
+    changed: open.filter(path => changeMarksVisible && changeMarks.has(path))
+  });
+}
+
 const TAB_LABEL_MAX = 30;
 
 /**
@@ -567,6 +586,16 @@ function buildHeader(pane) {
   mode.textContent = "Edit";
   mode.title = "Toggle source editing (Ctrl+E)";
   mode.addEventListener("click", () => { Layout.setActive(pane.id); toggleMode(pane); });
+
+  // Right-click offers to throw the unsaved edits away. It confirms first, and that is
+  // not politeness: silently discarding an edit is the one thing this app is built not
+  // to do, and a menu item one pixel from the Edit button is exactly where a misclick
+  // would land.
+  mode.addEventListener("contextmenu", event => {
+    event.preventDefault();
+    Layout.setActive(pane.id);
+    openDiscardMenu(event, pane);
+  });
 
   const badge = document.createElement("button");
   badge.className = "zoom-badge";
@@ -812,7 +841,7 @@ function toggleMode(pane) {
   applyMode(pane);
   refreshPaneChrome(pane);
   refreshDirtyMarks();
-  Workspace.setOpenFiles(Layout.openPaths(), editingPaths(), pinnedPaths());
+  syncFileStates();
   saveSession();
 
   const editor = editorElementOf(pane);
@@ -900,6 +929,10 @@ function refreshDirtyMarks() {
       setTabMark(tab, "dirty", dirty);
     }
   }
+
+  // This is the one that was missing: an unsaved edit put a bullet on the tab and
+  // nothing at all on the file's row in the panel.
+  syncFileStates();
 }
 
 function renderAll({ keepAnchors = true, save = true } = {}) {
@@ -910,7 +943,7 @@ function renderAll({ keepAnchors = true, save = true } = {}) {
 
   const pane = Layout.activePane();
   Workspace.highlight(pane && pane.active ? pane.active : null);
-  Workspace.setOpenFiles(Layout.openPaths(), editingPaths(), pinnedPaths());
+  syncFileStates();
 
   for (const p of Layout.panes()) applyMode(p);
   refreshDirtyMarks();
@@ -1145,6 +1178,10 @@ function refreshChangedDots() {
       setTabMark(tab, "changed", changed);
     }
   }
+
+  // The panel shows the same markers, so it has to hear about this too. Cheap: with the
+  // open set unchanged this only re-toggles classes on rows that already exist.
+  syncFileStates();
 }
 
 /** Updates every pane's chip in place, so a reload does not rebuild the header. */
@@ -1540,8 +1577,60 @@ function openTabContextMenu(event, paneId, path) {
     })
   );
 
-  // Same grace period as the menu bar: leaving for a frame and coming back must
-  // not snap the menu shut.
+  // Placement and the menu-bar's hover-out grace period are shared with the discard
+  // menu rather than written twice.
+  placeContextMenu(menu, event);
+}
+
+/**
+ * Right-clicking the Edit button offers to throw this pane's unsaved edits away.
+ *
+ * Two steps on purpose. Discarding an edit without asking is the one thing this app is
+ * built not to do -- it is why closing a dirty tab keeps the tab -- and this menu opens
+ * a few pixels from a button people click all day.
+ */
+function openDiscardMenu(event, pane) {
+  closeTabContextMenu();
+
+  const dirty = pane.tabs.filter(path => Editor.isDirty(pane.id, path));
+
+  // An arm that outlived the edits it was aimed at would offer a one-click discard days
+  // later, on whatever happens to be unsaved by then.
+  if (dirty.length === 0) discardArmed = null;
+
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+
+  if (discardArmed === pane.id) {
+    menu.append(contextItem("Discard " + dirty.length + " unsaved edit"
+      + (dirty.length === 1 ? "" : "s") + " — click to confirm", {
+      run: () => {
+        for (const path of dirty) Editor.forget(pane.id, path);
+        discardArmed = null;
+        post("get-text", pane.active);
+        renderAll({ keepAnchors: true });
+        statusTextEl.textContent = "Discarded unsaved edits in this pane.";
+      }
+    }));
+  } else {
+    menu.append(contextItem("Clear all unsaved edits...", {
+      unavailable: dirty.length ? null : "Nothing unsaved in this pane.",
+      run: () => {
+        discardArmed = pane.id;
+        statusTextEl.textContent =
+          "Right-click Edit again to confirm discarding " + dirty.length + " unsaved edit"
+          + (dirty.length === 1 ? "" : "s") + ".";
+      }
+    }));
+  }
+
+  placeContextMenu(menu, event);
+}
+
+/** Which pane has an armed discard, so the second right-click is the confirmation. */
+let discardArmed = null;
+
+function placeContextMenu(menu, event) {
   menu.addEventListener("mouseleave", () => {
     cancelContextMenuClose();
     contextMenuCloseTimer = setTimeout(() => {
