@@ -1740,9 +1740,19 @@ check("Escape closes the lightbox", $("#lightbox").hidden === true);
 send("doc-updated", markPayload(
   '<h1 id="w">W</h1><p><a href="https://example.com/x"><img src="' + IMG_SRC + '" alt="linked"></a></p>'));
 key("m", { ctrlKey: true });
-mScroller().querySelector('img[alt="linked"]')
-  .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+// Cancelable, like a real click. Without it preventDefault is a no-op, so jsdom went
+// ahead and navigated -- the app shell would have been replaced by example.com in a real
+// window. It surfaced as a stray jsdomError rather than a failure, and only once
+// something else in the suite started awaiting frames and gave the queued navigation
+// time to run.
+const linkedImageClick = new window.MouseEvent("click", { bubbles: true, cancelable: true });
+mScroller().querySelector('img[alt="linked"]').dispatchEvent(linkedImageClick);
+
 check("an image inside a link does not open the lightbox", $("#lightbox").hidden === true);
+check("the link is handed to the host rather than followed in the window",
+      linkedImageClick.defaultPrevented
+      && posted.filter(m => m.type === "open-external").pop()?.payload === "https://example.com/x",
+      String(posted.filter(m => m.type === "open-external").pop()?.payload));
 
 // --- pasting screenshots into the editor ---
 key("e", { ctrlKey: true });
@@ -2545,6 +2555,12 @@ check("the ephemeral slot rides along in the session",
 const mapEl = () =>
   $('[data-pane-id="' + window.eval("Layout.activeId") + '"] .docmap');
 
+// The map is drawn on the next animation frame, because every bar and band is measured
+// from a live offset and those are not final the instant a render returns. So these
+// assertions have to wait for it -- the async-ness is the fix for the map being blank on
+// first open, not an accident.
+const nextFrame = () => new Promise(resolve => window.requestAnimationFrame(() => resolve()));
+
 check("every pane has a map element", !!mapEl());
 check("it starts hidden", mapEl()?.hidden === true);
 check("nothing reserves width while it is off",
@@ -2552,6 +2568,7 @@ check("nothing reserves width while it is off",
       window.document.body.dataset.docmap);
 
 window.eval("Commands.run('toggleDocMap')");
+await nextFrame();
 check("the View menu toggle shows it", mapEl()?.hidden === false);
 check("it defaults to the full style, shape and markers",
       mapEl()?.dataset.style === "full", mapEl()?.dataset.style);
@@ -2562,6 +2579,7 @@ check("the canvas is drawn in the full style",
       mapEl()?.querySelector(".docmap-canvas")?.hidden === false);
 
 window.eval("Commands.run('cycleDocMapStyle')");
+await nextFrame();
 check("the style toggle switches to the ribbon",
       mapEl()?.dataset.style === "ribbon", mapEl()?.dataset.style);
 check("the ribbon draws no canvas",
@@ -2571,6 +2589,7 @@ check("the ribbon still reserves its own width",
       window.document.body.dataset.docmap);
 
 window.eval("Commands.run('cycleDocMapStyle')");
+await nextFrame();
 check("cycling returns to the full style", mapEl()?.dataset.style === "full");
 
 // Markers come from real offsets, so a document with headings has heading bands.
@@ -2581,6 +2600,7 @@ send("doc-opened", {
   outline: [{ level: 1, text: "One", id: "a" }, { level: 2, text: "Two", id: "b" }],
   missing: false, loadedAt: new Date().toISOString()
 });
+await nextFrame();
 check("headings become marker bands",
       $$(".pane .docmap-mark-heading").length >= 2,
       $$(".pane .docmap-mark").length + " bands");
@@ -2594,9 +2614,11 @@ check("the map carries a viewport window", !!mapEl()?.querySelector(".docmap-vie
 check("the map says it is describing the rendered view",
       mapEl()?.dataset.mode === "view", mapEl()?.dataset.mode);
 key("e", { ctrlKey: true });
+await nextFrame();
 check("entering source mode switches the map to it",
       mapEl()?.dataset.mode === "edit", mapEl()?.dataset.mode);
 key("e", { ctrlKey: true });
+await nextFrame();
 check("leaving source mode switches it back",
       mapEl()?.dataset.mode === "view", mapEl()?.dataset.mode);
 
@@ -2617,6 +2639,7 @@ check("the map state is session state",
       typeof mapState === "string" && mapState.length > 0);
 
 window.eval("Commands.run('toggleDocMap')");
+await nextFrame();
 check("toggling it off hides it again", mapEl()?.hidden === true);
 check("and gives the reserved width back",
       (window.document.body.dataset.docmap || "") === "",

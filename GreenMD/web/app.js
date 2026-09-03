@@ -174,23 +174,42 @@ function refreshDocMap(pane) {
   if (!mapEl) return;
 
   const scroller = activeScroller(pane);
+  const editing = !!pane.active && modeOf(pane, pane.active) === "edit";
 
-  // Aligned to the top of whatever is scrolling, not the top of the pane. Anchored to
-  // the pane it covered the tab strip and the header -- the Edit button disappeared
-  // under it. Measured rather than assumed, because the chrome above varies: the notice
-  // row comes and goes.
-  mapEl.style.top = (scroller ? scroller.offsetTop : 0) + "px";
+  // Offset from the *container*, not the scroller. In the rendered view they are the
+  // same element, which is why the first fix worked there and nowhere else: in source
+  // mode the scroller is the textarea, which is absolutely positioned inside
+  // .editor-wrap, so its offsetTop is 0 relative to that wrap rather than to the pane.
+  // The map went back to covering the header, and only in source mode.
+  const container = editing ? editorWrapOf(pane) : docElementOf(pane);
+  mapEl.style.top = (container ? container.offsetTop : 0) + "px";
 
   DocMap.render(mapEl, {
     scroller,
     editor: editorElementOf(pane),
-    editing: !!pane.active && modeOf(pane, pane.active) === "edit",
+    editing,
     bands: mapBands(pane)
   });
 }
 
+/**
+ * Coalesced onto the next frame, because every band and bar is measured from a live
+ * offset and those are not final the instant a render returns.
+ *
+ * This is why the map was blank on first open and after switching into source mode, and
+ * why switching files "fixed" it: the second render happened to land after layout had
+ * settled. Measuring a frame later is the difference between reading the document and
+ * reading a box that does not have its size yet.
+ */
+let docMapFrame = null;
+
 function refreshAllDocMaps() {
-  for (const pane of Layout.panes()) refreshDocMap(pane);
+  if (docMapFrame !== null) return;
+
+  docMapFrame = requestAnimationFrame(() => {
+    docMapFrame = null;
+    for (const pane of Layout.panes()) refreshDocMap(pane);
+  });
 }
 
 // ---------- scroll anchoring ----------
@@ -850,6 +869,14 @@ function renderPane(pane, element) {
   DocMap.bindDrag(map, () => activeScroller(pane));
   element.append(map);
 
+  // The map's box goes from zero to its real size after this function returns, and on
+  // every window resize and pane split after that. Observing it is what makes the first
+  // paint land without anything having to guess when layout is finished. Held only by
+  // this closure, so it is collected with the element it watches.
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => refreshAllDocMaps()).observe(map);
+  }
+
   const hint = document.createElement("div");
   hint.className = "drop-hint";
   element.append(hint);
@@ -1015,8 +1042,9 @@ function toggleMode(pane) {
   refreshPaneChrome(pane);
   refreshDirtyMarks();
   // The two modes draw the map from different sources, and this path does not go
-  // through renderAll, so it has to say so itself.
-  refreshDocMap(pane);
+  // through renderAll. Scheduled rather than immediate: applyMode has only just unhidden
+  // the other view, so nothing has its final size yet.
+  refreshAllDocMaps();
   syncFileStates();
   saveSession();
 

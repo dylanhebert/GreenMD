@@ -28,6 +28,23 @@ window.DocMap = (() => {
   /** Bars thinner than this are invisible; taller documents just get denser. */
   const MIN_BAR_PX = 1;
 
+  /**
+   * One colour per block kind, so a table, a diagram and a paragraph are distinguishable
+   * without anything being legible. Muted on purpose: the markers painted over this are
+   * the part meant to catch the eye, and they lose that if the backdrop competes.
+   */
+  const FILL = {
+    heading: "#b4b0a6",
+    prose:   "#565349",
+    code:    "#4c6058",
+    quote:   "#615943",
+    list:    "#5f5c51",
+    table:   "#5a5a63",
+    diagram: "#4a5b68",
+    image:   "#4a5b68",
+    rule:    "#3f3d37"
+  };
+
   let hooks = {};
 
   /** "full" | "ribbon" */
@@ -74,31 +91,96 @@ window.DocMap = (() => {
    * last line of a paragraph to come out ragged, and raggedness is most of what makes a
    * minimap look like prose.
    */
+  /**
+   * What a block is, so the map can draw it as itself.
+   *
+   * Everything-as-prose-bars was uninformative: a table, a diagram and three paragraphs
+   * all came out as the same grey texture, and the point of a map is telling them apart
+   * at a glance.
+   */
+  function kindOf(el) {
+    if (/^H[1-6]$/.test(el.tagName)) return "heading";
+    if (el.classList.contains("mermaid-figure") || el.querySelector("svg")) return "diagram";
+    if (el.tagName === "PRE" || el.classList.contains("mermaid")) return "code";
+    if (el.tagName === "TABLE") return "table";
+    if (el.tagName === "BLOCKQUOTE") return "quote";
+    if (el.tagName === "UL" || el.tagName === "OL") return "list";
+    if (el.tagName === "HR") return "rule";
+    if (el.tagName === "IMG" || el.querySelector("img")) return "image";
+    return "prose";
+  }
+
   function rectsFromDoc(scroller) {
     const total = scroller.scrollHeight || 1;
     const rects = [];
+    const at = (offset, height, extra) =>
+      rects.push(Object.assign({ top: offset / total, height: height / total }, extra));
 
     for (const el of scroller.children) {
       if (el.offsetHeight <= 0) continue;
 
-      const heading = /^H[1-6]$/.test(el.tagName);
+      const kind = kindOf(el);
       const text = (el.textContent || "").trim();
       const lineHeight = parseFloat(window.getComputedStyle(el).lineHeight) || 20;
 
+      // A heading is a checkpoint you scan for, so it gets one solid bar with a floor on
+      // its thickness rather than being averaged into the prose around it.
+      if (kind === "heading") {
+        const level = Number(el.tagName.slice(1)) || 1;
+        at(el.offsetTop, Math.max(lineHeight * 0.9, el.offsetHeight * 0.55), {
+          kind, level,
+          // Shallower headings read wider, so the document's structure is visible in the
+          // silhouette without any text being legible.
+          weight: Math.max(0.35, 1 - (level - 1) * 0.13)
+        });
+        continue;
+      }
+
+      // Solid shapes: there is no text to approximate, and their footprint is the
+      // information.
+      if (kind === "diagram" || kind === "image" || kind === "rule") {
+        at(el.offsetTop, el.offsetHeight, { kind, weight: kind === "rule" ? 0.9 : 1 });
+        continue;
+      }
+
+      // A grid, so a table looks like a table.
+      if (kind === "table") {
+        const rows = Math.max(1, el.querySelectorAll("tr").length);
+        const rowHeight = el.offsetHeight / rows;
+        for (let row = 0; row < rows; row++) {
+          at(el.offsetTop + row * rowHeight, Math.max(1, rowHeight - 1),
+             { kind, weight: 1, columns: 3 });
+        }
+        continue;
+      }
+
+      // One bar per item keeps a list's rhythm, which prose-lines would flatten.
+      if (kind === "list") {
+        for (const item of el.children) {
+          if (item.offsetHeight <= 0) continue;
+          const itemText = (item.textContent || "").trim();
+          at(item.offsetTop, Math.max(1, item.offsetHeight - 1), {
+            kind, indent: 0.12,
+            weight: Math.max(0.2, Math.min(1, itemText.length / REFERENCE_COLUMNS))
+          });
+        }
+        continue;
+      }
+
+      // Prose, code and quotes are all runs of lines; only their colour and indent
+      // differ. The line count comes from the block's height over its line-height,
+      // since proportional text has no line boxes to read out.
       const lines = Math.max(1, Math.round(el.offsetHeight / lineHeight));
       const perLine = el.offsetHeight / lines;
       const charsPerLine = Math.max(1, Math.ceil(text.length / lines));
+      const indent = kind === "quote" ? 0.14 : 0;
 
       for (let index = 0; index < lines; index++) {
         // The tail of the block's text, so the final line stops where the words do.
         const remaining = text.length - index * charsPerLine;
-        const fill = Math.max(0, Math.min(1, remaining / charsPerLine));
-
-        rects.push({
-          top: (el.offsetTop + index * perLine) / total,
-          height: perLine / total,
-          weight: heading ? Math.min(1, 0.35 + text.length / 60) : fill,
-          heading
+        at(el.offsetTop + index * perLine, perLine, {
+          kind, indent,
+          weight: Math.max(0, Math.min(1, remaining / charsPerLine))
         });
       }
     }
@@ -112,17 +194,31 @@ window.DocMap = (() => {
     const lines = editor.value.split(newline);
     const count = Math.max(1, lines.length);
 
+    let inFence = false;
+
     return lines.map((line, index) => {
-      const indent = line.length - line.trimStart().length;
+      const body = line.trimStart();
+      const indent = line.length - body.length;
+
+      // Fences toggle, so everything between them is drawn as code even when the lines
+      // themselves look like prose or headings.
+      if (body.startsWith("```")) inFence = !inFence;
+
+      let kind = "prose";
+      if (inFence || body.startsWith("```")) kind = "code";
+      else if (body.startsWith("#")) kind = "heading";
+      else if (body.startsWith(">")) kind = "quote";
+      else if (/^([-*+]|\d+\.)\s/.test(body)) kind = "list";
+      else if (/^(-{3,}|\*{3,}|_{3,})$/.test(body)) kind = "rule";
 
       return {
         top: index / count,
         height: 1 / count,
+        kind,
         // A blank line gets no bar at all, so paragraphs separate instead of merging
         // into one mass.
         weight: Math.min(1, Math.max(0, line.length - indent) / REFERENCE_COLUMNS),
-        indent: Math.min(0.4, indent / REFERENCE_COLUMNS),
-        heading: line.trimStart().startsWith("#")
+        indent: Math.min(0.4, indent / REFERENCE_COLUMNS)
       };
     });
   }
@@ -152,10 +248,22 @@ window.DocMap = (() => {
       // full-width lines merge and the whole thing reads as a slab.
       const barHeight = Math.max(MIN_BAR_PX, rect.height * height - 1);
       const left = (rect.indent || 0) * cssWidth;
-      const barWidth = Math.max(1, rect.weight * (cssWidth - left));
+      const span = Math.max(1, rect.weight * (cssWidth - left));
 
-      context.fillStyle = rect.heading ? "#8d8a82" : "#565349";
-      context.fillRect(left, y, barWidth, barHeight);
+      context.fillStyle = FILL[rect.kind] || FILL.prose;
+
+      // A table is drawn as columns with gaps, so it reads as a grid rather than a
+      // block. Everything else is one bar.
+      if (rect.columns) {
+        const gap = 2;
+        const cell = Math.max(1, (span - gap * (rect.columns - 1)) / rect.columns);
+        for (let column = 0; column < rect.columns; column++) {
+          context.fillRect(left + column * (cell + gap), y, cell, barHeight);
+        }
+        continue;
+      }
+
+      context.fillRect(left, y, span, barHeight);
     }
   }
 
