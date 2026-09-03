@@ -1314,7 +1314,6 @@ mark.find-current {
   bottom: 0;
   z-index: 3;
   width: 80px;
-  cursor: pointer;
   background: var(--bg-panel);
   border-left: 1px solid var(--border);
   overflow: hidden;
@@ -1348,7 +1347,9 @@ mark.find-current {
 }
 .docmap-viewport[hidden] { display: none; }
 
-body.docmap-dragging, body.docmap-dragging * { cursor: grabbing !important; user-select: none; }
+/* No cursor change: the map is a surface you drag on, not a control that claims to
+   be clickable, and a pointer over a strip of bars just looks like a mistake. */
+body.docmap-dragging, body.docmap-dragging * { user-select: none; }
 
 /* Reserve the width, and take the native scrollbar away -- the map replaces it. */
 body[data-docmap="full"]   .doc { padding-right: 136px; }

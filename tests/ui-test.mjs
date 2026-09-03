@@ -2539,7 +2539,11 @@ check("the ephemeral slot rides along in the session",
 // jsdom performs no layout, so the bands' positions are all zero here. What is testable
 // is that the right number of them exist and carry the right kinds; where they sit on
 // screen needs --dump-layout.
-const mapEl = () => $(".pane .docmap");
+// Resolved through the active pane rather than the first .pane in the document: the
+// suite has two panes by this point, the map's mode is per-pane, and a first draft of
+// these checks was reading a different pane's map than Ctrl+E was acting on.
+const mapEl = () =>
+  $('[data-pane-id="' + window.eval("Layout.activeId") + '"] .docmap');
 
 check("every pane has a map element", !!mapEl());
 check("it starts hidden", mapEl()?.hidden === true);
@@ -2583,6 +2587,29 @@ check("headings become marker bands",
 
 // The viewport window is the part that says where you are.
 check("the map carries a viewport window", !!mapEl()?.querySelector(".docmap-viewport"));
+
+// It reads from a different source in each mode, and used to be measured before
+// applyMode had settled which view was showing -- so it described the mode you had just
+// left. Recorded on the element so this is observable rather than inferred.
+check("the map says it is describing the rendered view",
+      mapEl()?.dataset.mode === "view", mapEl()?.dataset.mode);
+key("e", { ctrlKey: true });
+check("entering source mode switches the map to it",
+      mapEl()?.dataset.mode === "edit", mapEl()?.dataset.mode);
+key("e", { ctrlKey: true });
+check("leaving source mode switches it back",
+      mapEl()?.dataset.mode === "view", mapEl()?.dataset.mode);
+
+// It must clear the pane's chrome rather than covering it: anchored to the pane it sat
+// over the tab strip and the header, and the Edit button vanished underneath.
+check("the map starts at the top of the scroller, not the pane",
+      typeof mapEl()?.style.top === "string" && mapEl().style.top.endsWith("px"),
+      mapEl()?.style.top);
+
+// Hovering a strip of bars should not claim to be a control.
+const mapRule = cssText.match(/^\.docmap\s*\{[^}]*\}/m)?.[0] ?? "";
+check("the map does not change the cursor",
+      !/cursor:/.test(mapRule), mapRule.replace(/\s+/g, " "));
 
 // The style choice and the on/off state both survive a restart.
 const mapState = window.eval("JSON.stringify(Layout.serialize())") + "";

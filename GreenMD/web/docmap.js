@@ -57,25 +57,53 @@ window.DocMap = (() => {
   // ---------- measuring the document ----------
 
   /**
-   * The rendered view's shape: one entry per top-level block, positioned by its real
-   * offset so the map lines up with the document rather than with a line count.
+   * A typical line's width, in characters. Used as the reference a bar's length is
+   * measured against rather than the document's longest line: scaling to the longest
+   * line pushes every ordinary line to full width, which is what made this read as
+   * stacked slabs instead of text.
+   */
+  const REFERENCE_COLUMNS = 90;
+
+  /**
+   * The rendered view's shape, one bar per *rendered line* rather than per block.
+   *
+   * Per-block was the first attempt and it looked like a bar chart: a six-line
+   * paragraph became one solid rectangle six lines tall. There are no line boxes to
+   * read out of proportional text, so the count is derived from the block's height over
+   * its line-height and the characters spread across them -- which is enough for the
+   * last line of a paragraph to come out ragged, and raggedness is most of what makes a
+   * minimap look like prose.
    */
   function rectsFromDoc(scroller) {
-    const blocks = [...scroller.children].filter(el => el.offsetHeight > 0);
     const total = scroller.scrollHeight || 1;
+    const rects = [];
 
-    return blocks.map(el => {
-      const text = el.textContent || "";
+    for (const el of scroller.children) {
+      if (el.offsetHeight <= 0) continue;
+
       const heading = /^H[1-6]$/.test(el.tagName);
+      const text = (el.textContent || "").trim();
+      const lineHeight = parseFloat(window.getComputedStyle(el).lineHeight) || 20;
 
-      return {
-        top: el.offsetTop / total,
-        height: el.offsetHeight / total,
-        // Headings read as short, solid bars; body text as longer, lighter ones.
-        weight: heading ? 1 : Math.min(1, text.length / 400),
-        heading
-      };
-    });
+      const lines = Math.max(1, Math.round(el.offsetHeight / lineHeight));
+      const perLine = el.offsetHeight / lines;
+      const charsPerLine = Math.max(1, Math.ceil(text.length / lines));
+
+      for (let index = 0; index < lines; index++) {
+        // The tail of the block's text, so the final line stops where the words do.
+        const remaining = text.length - index * charsPerLine;
+        const fill = Math.max(0, Math.min(1, remaining / charsPerLine));
+
+        rects.push({
+          top: (el.offsetTop + index * perLine) / total,
+          height: perLine / total,
+          weight: heading ? Math.min(1, 0.35 + text.length / 60) : fill,
+          heading
+        });
+      }
+    }
+
+    return rects;
   }
 
   /** Source mode has real lines, so this is a genuine minimap of the text. */
@@ -83,7 +111,6 @@ window.DocMap = (() => {
     const newline = String.fromCharCode(10);
     const lines = editor.value.split(newline);
     const count = Math.max(1, lines.length);
-    const longest = Math.max(20, ...lines.map(line => line.length));
 
     return lines.map((line, index) => {
       const indent = line.length - line.trimStart().length;
@@ -91,9 +118,11 @@ window.DocMap = (() => {
       return {
         top: index / count,
         height: 1 / count,
-        weight: Math.min(1, (line.length - indent) / longest),
-        indent: Math.min(0.5, indent / longest),
-        heading: line.startsWith("#")
+        // A blank line gets no bar at all, so paragraphs separate instead of merging
+        // into one mass.
+        weight: Math.min(1, Math.max(0, line.length - indent) / REFERENCE_COLUMNS),
+        indent: Math.min(0.4, indent / REFERENCE_COLUMNS),
+        heading: line.trimStart().startsWith("#")
       };
     });
   }
@@ -114,10 +143,16 @@ window.DocMap = (() => {
     context.clearRect(0, 0, cssWidth, height);
 
     for (const rect of rects) {
+      // A blank line draws nothing. Clamping it up to a one-pixel stub instead is what
+      // welded paragraphs together into one mass.
+      if (!rect.weight || rect.weight <= 0) continue;
+
       const y = rect.top * height;
+      // The gap is what separates one line from the next; without it consecutive
+      // full-width lines merge and the whole thing reads as a slab.
       const barHeight = Math.max(MIN_BAR_PX, rect.height * height - 1);
       const left = (rect.indent || 0) * cssWidth;
-      const barWidth = Math.max(1, (rect.weight || 0) * (cssWidth - left));
+      const barWidth = Math.max(1, rect.weight * (cssWidth - left));
 
       context.fillStyle = rect.heading ? "#8d8a82" : "#565349";
       context.fillRect(left, y, barWidth, barHeight);
@@ -153,6 +188,9 @@ window.DocMap = (() => {
 
     mapEl.hidden = !enabled;
     mapEl.dataset.style = style;
+    // Recorded so which document the map is describing is observable rather than
+    // inferred: the two modes draw from different sources and it has been wrong once.
+    mapEl.dataset.mode = editing ? "edit" : "view";
 
     // Visibility is a style question, not a measurement, so it is settled before any
     // geometry is consulted. Gating it on a height meant a pane measured mid-layout at

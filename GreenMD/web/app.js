@@ -173,8 +173,16 @@ function refreshDocMap(pane) {
   const mapEl = mapElementOf(pane);
   if (!mapEl) return;
 
+  const scroller = activeScroller(pane);
+
+  // Aligned to the top of whatever is scrolling, not the top of the pane. Anchored to
+  // the pane it covered the tab strip and the header -- the Edit button disappeared
+  // under it. Measured rather than assumed, because the chrome above varies: the notice
+  // row comes and goes.
+  mapEl.style.top = (scroller ? scroller.offsetTop : 0) + "px";
+
   DocMap.render(mapEl, {
-    scroller: activeScroller(pane),
+    scroller,
     editor: editorElementOf(pane),
     editing: !!pane.active && modeOf(pane, pane.active) === "edit",
     bands: mapBands(pane)
@@ -824,6 +832,12 @@ function renderPane(pane, element) {
   editor.addEventListener("scroll", () => {
     highlight.scrollTop = editor.scrollTop;
     highlight.scrollLeft = editor.scrollLeft;
+
+    // And so does the map's viewport. This listener was doing only the highlight, so in
+    // source mode the page scrolled and the map sat still -- the .doc scroller's
+    // listener is the one that moved it, and in source mode that element is hidden.
+    const mapEl = mapElementOf(pane);
+    if (mapEl && !mapEl.hidden) DocMap.renderViewport(mapEl, editor);
   }, { passive: true });
 
   wrap.append(highlight, editor);
@@ -1000,6 +1014,9 @@ function toggleMode(pane) {
   applyMode(pane);
   refreshPaneChrome(pane);
   refreshDirtyMarks();
+  // The two modes draw the map from different sources, and this path does not go
+  // through renderAll, so it has to say so itself.
+  refreshDocMap(pane);
   syncFileStates();
   saveSession();
 
@@ -1104,9 +1121,6 @@ function renderAll({ keepAnchors = true, save = true } = {}) {
   Workspace.highlight(pane && pane.active ? pane.active : null);
   syncFileStates();
 
-  // After the panes are laid out, since every band is measured from a real offset.
-  refreshAllDocMaps();
-
   for (const p of Layout.panes()) applyMode(p);
   refreshDirtyMarks();
 
@@ -1118,6 +1132,13 @@ function renderAll({ keepAnchors = true, save = true } = {}) {
     Find.run(findTarget(), findInputEl.value);
     updateFindCount();
   }
+
+  // Last, and that ordering is the fix for a real bug rather than tidiness. Every band
+  // is measured from a live offset, so this has to run after applyMode has settled which
+  // of the two views is showing -- it used to run before, and measured whichever
+  // scroller the *previous* mode had left visible -- and after Find has painted its
+  // hits, or the map would show the last search's matches.
+  refreshAllDocMaps();
 
   if (save) saveSession();
   Menu.refresh();
