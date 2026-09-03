@@ -2129,9 +2129,12 @@ host.addEventListener("message", (event) => {
       refreshOutline();
       refreshStatus();
       for (const p of Layout.panes()) applyMode(p);
-  refreshDirtyMarks();
+      refreshDirtyMarks();
+      // Restored tabs get their content here rather than through renderAll, which is why
+      // the map was blank until you switched files -- that path does go through it.
+      refreshAllDocMaps();
 
-  reportTitle();
+      reportTitle();
       break;
     }
 
@@ -2139,6 +2142,9 @@ host.addEventListener("message", (event) => {
       Editor.receiveText(payload.path, payload.text);
       for (const pane of Layout.panesShowing(payload.path)) applyMode(pane);
       refreshDirtyMarks();
+      // The source arrives a round trip after Ctrl+E asked for it, so the map drawn at
+      // toggle time described an empty textarea. This is the arrival.
+      refreshAllDocMaps();
       break;
 
     case "save-result":
@@ -2335,6 +2341,9 @@ host.addEventListener("message", (event) => {
       Menu.refresh();
       refreshOutline();
       refreshStatus(true);
+      // A live reload repaints the document in place without going through renderAll,
+      // so the map's bars and its change bands would both describe the old version.
+      refreshAllDocMaps();
       break;
     }
   }

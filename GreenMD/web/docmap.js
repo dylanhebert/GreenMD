@@ -29,6 +29,16 @@ window.DocMap = (() => {
   const MIN_BAR_PX = 1;
 
   /**
+   * How deep to draw headings as actual words, and at what size.
+   *
+   * Only the top two: an h1 is a landmark worth reading, an h2 usually is, and below
+   * that the text is too small to help while the clutter is real. Everything deeper
+   * stays a bar, which still says a heading is there.
+   */
+  const HEADING_TEXT_LEVELS = 2;
+  const HEADING_TEXT_PX = { 1: 9, 2: 7 };
+
+  /**
    * One colour per block kind, so a table, a diagram and a paragraph are distinguishable
    * without anything being legible. Muted on purpose: the markers painted over this are
    * the part meant to catch the eye, and they lose that if the backdrop competes.
@@ -129,8 +139,12 @@ window.DocMap = (() => {
         const level = Number(el.tagName.slice(1)) || 1;
         at(el.offsetTop, Math.max(lineHeight * 0.9, el.offsetHeight * 0.55), {
           kind, level,
-          // Shallower headings read wider, so the document's structure is visible in the
-          // silhouette without any text being legible.
+          // Carried so the top levels can be drawn as actual words. A heading is the
+          // landmark you scan for, and a bar tells you one is there without telling you
+          // which -- which is most of what you wanted to know.
+          text,
+          // Shallower headings read wider, so the structure is visible in the
+          // silhouette even where the text is too small to draw.
           weight: Math.max(0.35, 1 - (level - 1) * 0.13)
         });
         continue;
@@ -205,8 +219,16 @@ window.DocMap = (() => {
       if (body.startsWith("```")) inFence = !inFence;
 
       let kind = "prose";
+      let level = 0;
+      let heading = "";
+
       if (inFence || body.startsWith("```")) kind = "code";
-      else if (body.startsWith("#")) kind = "heading";
+      else if (body.startsWith("#")) {
+        kind = "heading";
+        const hashes = body.match(/^#+/);
+        level = hashes ? hashes[0].length : 1;
+        heading = body.slice(level).trim();
+      }
       else if (body.startsWith(">")) kind = "quote";
       else if (/^([-*+]|\d+\.)\s/.test(body)) kind = "list";
       else if (/^(-{3,}|\*{3,}|_{3,})$/.test(body)) kind = "rule";
@@ -214,7 +236,7 @@ window.DocMap = (() => {
       return {
         top: index / count,
         height: 1 / count,
-        kind,
+        kind, level, text: heading,
         // A blank line gets no bar at all, so paragraphs separate instead of merging
         // into one mass.
         weight: Math.min(1, Math.max(0, line.length - indent) / REFERENCE_COLUMNS),
@@ -251,6 +273,30 @@ window.DocMap = (() => {
       const span = Math.max(1, rect.weight * (cssWidth - left));
 
       context.fillStyle = FILL[rect.kind] || FILL.prose;
+
+      // Top-level headings are drawn as words rather than a bar, so a glance tells you
+      // *which* section you are looking at. Only where there is room: the ribbon is too
+      // narrow for type at any size, and a long document scales headings below the point
+      // of legibility -- in both cases it falls back to the bar, which still marks the
+      // position.
+      if (rect.text && rect.level <= HEADING_TEXT_LEVELS && cssWidth >= 40) {
+        const size = Math.min(HEADING_TEXT_PX[rect.level] || 6, Math.max(5, barHeight + 2));
+
+        if (size >= 5.5) {
+          context.save();
+          // Clipped rather than measured and truncated: a heading that overruns should
+          // run off the edge like text does, not end in an ellipsis nobody can read.
+          context.beginPath();
+          context.rect(2, y - 1, cssWidth - 4, Math.max(size + 2, barHeight + 2));
+          context.clip();
+
+          context.font = "600 " + size.toFixed(1) + "px 'Segoe UI', system-ui, sans-serif";
+          context.textBaseline = "top";
+          context.fillText(rect.text, 2, y);
+          context.restore();
+          continue;
+        }
+      }
 
       // A table is drawn as columns with gaps, so it reads as a grid rather than a
       // block. Everything else is one bar.

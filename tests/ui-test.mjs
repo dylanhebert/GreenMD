@@ -2638,6 +2638,38 @@ const mapState = window.eval("JSON.stringify(Layout.serialize())") + "";
 check("the map state is session state",
       typeof mapState === "string" && mapState.length > 0);
 
+// Reported twice, and the same gap both times: content that arrives *after* a render
+// left the map describing nothing. Restored tabs get theirs through doc-content and the
+// editor gets its source through doc-text, and neither goes through renderAll -- which
+// is why switching files appeared to fix it, since that path does.
+const MAPPED = "C:" + SEP + "map" + SEP + "mapped.md";
+const headingBands = () => $$(".pane .docmap-mark-heading").length;
+
+send("doc-content", {
+  path: MAPPED, title: "mapped.md", folder: "C:" + SEP + "map",
+  html: '<h1 id="a">One</h1><p>a</p><h2 id="b">Two</h2><p>b</p>'
+      + '<h2 id="c">Three</h2><p>c</p><h2 id="d">Four</h2>',
+  outline: [{ level: 1, text: "One", id: "a" }, { level: 2, text: "Two", id: "b" },
+            { level: 2, text: "Three", id: "c" }, { level: 2, text: "Four", id: "d" }],
+  missing: false, loadedAt: new Date().toISOString()
+});
+await nextFrame();
+check("content arriving for a restored tab redraws the map",
+      headingBands() >= 4, headingBands() + " heading bands");
+
+// And the source arriving a round trip after Ctrl+E.
+key("e", { ctrlKey: true });
+await nextFrame();
+check("entering source mode before the text arrives leaves the map on source",
+      mapEl()?.dataset.mode === "edit", mapEl()?.dataset.mode);
+
+send("doc-text", { path: MAPPED, text: "# One\n\nbody\n\n## Two\n\nmore\n" });
+await nextFrame();
+check("the source arriving redraws the map",
+      mapEl()?.dataset.mode === "edit", mapEl()?.dataset.mode);
+key("e", { ctrlKey: true });
+await nextFrame();
+
 window.eval("Commands.run('toggleDocMap')");
 await nextFrame();
 check("toggling it off hides it again", mapEl()?.hidden === true);
