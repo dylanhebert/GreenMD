@@ -1027,6 +1027,36 @@ function updateNotice(pane) {
   const stale = pane.active && modeOf(pane, pane.active) === "edit"
                 && Editor.isStale(pane.id, pane.active);
 
+  // A file-level dot with no blocks to show. The fingerprint knows the file moved; it
+  // cannot know what it looked like before, because the earlier version was never held.
+  // Saying nothing here is worse than saying that: the dot sent the reader to a document
+  // that looks exactly like an unchanged one, and the obvious conclusion is that the
+  // marks are broken.
+  const unexplained = !stale && pane.active
+                      && changedOnDisk.has(pane.active)
+                      && !changeMarks.has(pane.active);
+
+  if (unexplained) {
+    notice.hidden = false;
+    notice.replaceChildren();
+    notice.append("Changed since you last saw it. The earlier version was not open, "
+                  + "so the changes cannot be highlighted.");
+
+    const seen = document.createElement("button");
+    seen.type = "button";
+    seen.textContent = "Mark as seen";
+    seen.addEventListener("click", () => {
+      markFileSeen(pane.active);
+      saveSession();
+      refreshChangedDots();
+      refreshChangeChips();
+      updateNotice(pane);
+    });
+
+    notice.append(seen);
+    return;
+  }
+
   if (!stale) { notice.hidden = true; notice.replaceChildren(); return; }
 
   notice.hidden = false;
@@ -2641,6 +2671,10 @@ host.addEventListener("message", (event) => {
 
       renderAll({ keepAnchors: false });
       syncOpenPaths();
+
+      // The unexplained-change notice is per document, so arriving at one has to
+      // reconsider it -- renderAll does not know which document just landed.
+      for (const pane of Layout.panes()) updateNotice(pane);
       break;
     }
 

@@ -2948,6 +2948,35 @@ check("a later write from elsewhere is reported again", rowChanged(F_ONE),
       "one file-written must not excuse every future change to that file");
 window.eval("Commands.run('markAllChangesSeen')");
 
+// A dot with nothing to show has to say so. The fingerprint knows the file moved; it
+// cannot know what it looked like before, because the earlier version was never held --
+// so opening it lands on a document that looks exactly like an unchanged one, and the
+// obvious conclusion is that the marks are broken.
+send("workspace", folderScan("2026-09-04T09:00:00Z", "2026-09-01T10:00:00Z"));
+check("the file is dotted", rowChanged(F_ONE));
+
+send("doc-opened", {
+  path: F_ONE, title: "one.md", folder: F_ROOT,
+  html: '<h1 id="o">One</h1><p>whatever it says now</p>',
+  outline: [{ level: 1, text: "One", id: "o" }],
+  missing: false, loadedAt: new Date().toISOString()
+});
+
+const fNotice = () => tabFor(F_ONE)?.closest(".pane")?.querySelector(".pane-notice");
+check("opening it explains why nothing is highlighted",
+      fNotice()?.hidden === false
+      && (fNotice()?.textContent || "").includes("cannot be highlighted"),
+      fNotice()?.textContent);
+check("the notice offers to clear the dot",
+      [...(fNotice()?.querySelectorAll("button") ?? [])]
+        .some(b => b.textContent === "Mark as seen"));
+
+[...fNotice().querySelectorAll("button")]
+  .find(b => b.textContent === "Mark as seen")
+  ?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("taking it clears the dot", !rowChanged(F_ONE), rowOf(F_ONE)?.className);
+check("and the notice goes with it", fNotice()?.hidden === true);
+
 // Right-clicking a folder header offers the same thing for one folder.
 send("workspace", folderScan("2026-09-03T12:00:00Z", "2026-09-03T12:00:00Z"));
 check("both files changed now", rowChanged(F_ONE) && rowChanged(F_TWO));
