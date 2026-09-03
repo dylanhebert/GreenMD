@@ -258,8 +258,14 @@ public partial class MainWindow : Window
 
         if (saved is not null)
         {
-            RestoreWorkspaces(saved.Value);
+            // The session goes first, and the order is load-bearing. It carries the
+            // record of which files the reader has already seen, and restoring the
+            // workspaces posts a tree -- so the other way round the UI met the folder's
+            // contents with no record to compare them against, treated every file as
+            // first sight, and then had the real record dropped on top. The next change
+            // to any one file reported all of them.
             Post("session", saved.Value);
+            RestoreWorkspaces(saved.Value);
         }
 
         if (!string.IsNullOrWhiteSpace(_initialPath))

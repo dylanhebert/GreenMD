@@ -2948,6 +2948,38 @@ check("a later write from elsewhere is reported again", rowChanged(F_ONE),
       "one file-written must not excuse every future change to that file");
 window.eval("Commands.run('markAllChangesSeen')");
 
+// Startup order. The folder tree reaching the UI before the seen record meant every
+// file was met with nothing to compare against, treated as first sight, and then had the
+// real record dropped on top -- so the next change to any one file reported all of them.
+// The host sends the session first now, and this asserts the UI survives the other order
+// anyway rather than depending on it.
+// Settled first: scan, mark seen, scan the same state again. Marking seen and then
+// sending a *different* scan is a real change, which is what a first draft of this did
+// before blaming the code for reporting it.
+send("workspace", folderScan("2026-09-05T08:00:00Z", "2026-09-05T08:00:00Z"));
+window.eval("Commands.run('markAllChangesSeen')");
+send("workspace", folderScan("2026-09-05T08:00:00Z", "2026-09-05T08:00:00Z"));
+check("a state already seen marks nothing", !rowChanged(F_ONE) && !rowChanged(F_TWO),
+      rowOf(F_ONE)?.className + " | " + rowOf(F_TWO)?.className);
+
+// Now the record lands, and it remembers an older state for one of them.
+send("session", {
+  seenFiles: {
+    [F_ONE]: "100:2026-09-01T10:00:00Z",
+    [F_TWO]: "200:2026-09-05T08:00:00Z"
+  }
+});
+check("the restored record is compared against what is already on screen",
+      rowChanged(F_ONE), rowOf(F_ONE)?.className);
+check("and a file the record already matches stays clean",
+      !rowChanged(F_TWO), rowOf(F_TWO)?.className);
+
+// The premature baseline must not have survived: if it had, the file above would have
+// read as current and the change would have been lost for good.
+send("workspace", folderScan("2026-09-05T08:00:00Z", "2026-09-05T08:00:00Z"));
+check("a later rescan still reports it", rowChanged(F_ONE));
+window.eval("Commands.run('markAllChangesSeen')");
+
 // A dot with nothing to show has to say so. The fingerprint knows the file moved; it
 // cannot know what it looked like before, because the earlier version was never held --
 // so opening it lands on a document that looks exactly like an unchanged one, and the

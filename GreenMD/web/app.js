@@ -2416,6 +2416,12 @@ function restoreSession(state) {
   if (state.seenFiles && typeof state.seenFiles === "object") {
     // Persisted so a file rewritten while the app was closed still reads as changed.
     seenFiles = new Map(Object.entries(state.seenFiles));
+
+    // And compared immediately. The host now sends the session before any folder tree,
+    // but a tree that arrived first would already have baselined every file against an
+    // empty record -- this reconsiders whatever is on screen against the real one, so
+    // the ordering is no longer the only thing holding it together.
+    reconcileSeenFiles();
   }
 
   if (state.docMap && typeof state.docMap === "object") {
