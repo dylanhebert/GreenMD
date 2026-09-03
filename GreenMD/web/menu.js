@@ -42,7 +42,8 @@ window.Menu = (() => {
         { separator: true },
         { command: "find" },
         { separator: true },
-        { command: "clearChangeMarks" }
+        { command: "clearChangeMarks" },
+        { command: "markAllChangesSeen" }
       ]
     },
     {
@@ -77,7 +78,9 @@ window.Menu = (() => {
       label: "Go",
       items: [
         { command: "goToFile" },
-        { command: "find" }
+        { command: "find" },
+        { separator: true },
+        { command: "nextChanged" }
       ]
     },
     {

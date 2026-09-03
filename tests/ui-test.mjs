@@ -2689,6 +2689,93 @@ check("and gives the reserved width back",
 check("the style command greys out while the map is off",
       window.eval("Commands.get('cycleDocMapStyle').available() === false"));
 
+// --- walking the changed documents ---
+// The marks say a document moved; this is how you get to it. Two documents are given
+// unseen changes and the command has to walk both and stop claiming there is anything
+// left once they are dismissed.
+const N_DIR = "C:" + SEP + "nav";
+const N_A = N_DIR + SEP + "nav-a.md";
+const N_B = N_DIR + SEP + "nav-b.md";
+
+function navDoc(path, title, body) {
+  return { path, title, folder: N_DIR,
+           html: '<h1 id="n">' + title + "</h1><p>" + body + "</p>",
+           outline: [{ level: 1, text: title, id: "n" }],
+           missing: false, loadedAt: new Date().toISOString() };
+}
+
+send("doc-opened", navDoc(N_A, "nav-a.md", "first"));
+send("doc-opened", navDoc(N_B, "nav-b.md", "first"));
+
+// Five documents are already carrying marks by this point in the suite, so this starts
+// from a known state rather than assuming a clean one -- the counts and the walk order
+// are the whole assertion here and leftovers make both meaningless.
+window.eval("Commands.run('markAllChangesSeen')");
+
+check("the chip is hidden while nothing has changed", $("#changedChip").hidden === true,
+      $("#changedChip").textContent);
+check("the command is unavailable with nothing changed",
+      window.eval("Commands.get('nextChanged').available() === false"));
+
+// Both move.
+send("doc-updated", navDoc(N_A, "nav-a.md", "rewritten a"));
+send("doc-updated", navDoc(N_B, "nav-b.md", "rewritten b"));
+
+check("the chip counts the changed documents",
+      $("#changedChip").hidden === false
+      && ($("#changedChip").textContent || "").startsWith("2"),
+      $("#changedChip").textContent);
+check("the command is available now",
+      window.eval("Commands.get('nextChanged').available() === true"));
+
+// Walking the set. Which one it lands on first depends on where the active tab already
+// is, so the assertion is that it moves between the two rather than a fixed order.
+const activePath = () => window.eval("(Layout.activePane() || {}).active");
+key("m", { ctrlKey: true, shiftKey: true });
+const firstStop = activePath();
+check("Ctrl+Shift+M lands on a changed document",
+      firstStop === N_A || firstStop === N_B, String(firstStop));
+
+key("m", { ctrlKey: true, shiftKey: true });
+const secondStop = activePath();
+check("pressing it again moves to the other one",
+      secondStop !== firstStop && (secondStop === N_A || secondStop === N_B),
+      String(secondStop));
+
+key("m", { ctrlKey: true, shiftKey: true });
+check("it wraps rather than stopping at the end", activePath() === firstStop,
+      String(activePath()));
+
+// The chip is the same action for the mouse.
+const beforeChipClick = activePath();
+$("#changedChip").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("clicking the chip walks the set too", activePath() !== beforeChipClick,
+      String(activePath()));
+
+// Marking everything seen empties the set, and the affordances go with it.
+window.eval("Commands.run('markAllChangesSeen')");
+check("mark all as seen clears both documents",
+      !tabFor(N_A)?.classList.contains("changed")
+      && !tabFor(N_B)?.classList.contains("changed"));
+check("the chip disappears with the last change", $("#changedChip").hidden === true);
+check("and the command goes unavailable again",
+      window.eval("Commands.get('nextChanged').available() === false"));
+
+// Hiding the marks must empty the set as well: navigating to what you cannot see is
+// worse than not offering it.
+send("doc-updated", navDoc(N_A, "nav-a.md", "rewritten again"));
+check("a fresh change brings the chip back", $("#changedChip").hidden === false);
+window.eval("Commands.run('toggleChangeMarks')");
+check("hiding the marks hides the chip", $("#changedChip").hidden === true,
+      $("#changedChip").textContent);
+check("and takes the command with it",
+      window.eval("Commands.get('nextChanged').available() === false"));
+window.eval("Commands.run('toggleChangeMarks')");
+check("showing them again restores both",
+      $("#changedChip").hidden === false
+      && window.eval("Commands.get('nextChanged').available() === true"));
+window.eval("Commands.run('markAllChangesSeen')");
+
 // --- report ---
 console.log("");
 for (const r of results) {

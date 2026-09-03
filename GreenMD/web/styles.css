@@ -1377,3 +1377,19 @@ body[data-docmap="ribbon"] .editor   { padding-right: 40px; }
 
 body[data-docmap] .editor { scrollbar-width: none; }
 body[data-docmap] .editor::-webkit-scrollbar { display: none; }
+
+/* The changed-document count in the status bar, and the handle for walking them.
+   Amber like the marks themselves, so it needs no explaining. */
+.status-changed {
+  padding: 1px 9px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--changed);
+  background: #2a2618;
+  border: 1px solid #4a4416;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.status-changed:hover { background: #362f1c; border-color: #6b6220; }
+.status-changed[hidden] { display: none; }

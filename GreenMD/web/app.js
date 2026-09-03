@@ -1151,6 +1151,9 @@ function renderAll({ keepAnchors = true, save = true } = {}) {
 
   for (const p of Layout.panes()) applyMode(p);
   refreshDirtyMarks();
+  // Not covered by refreshChangedDots, which only runs when the marks themselves move.
+  // Hiding the marks empties the set too, and that arrives through here.
+  refreshChangedChip();
 
   reportTitle();
 
@@ -1377,6 +1380,102 @@ function changeChipText(marks) {
  * survives opening the tab and every re-render, and goes away only when the marks
  * are dismissed -- a reminder that there are changes not yet marked as seen.
  */
+// ---------- navigating to what changed ----------
+//
+// The marks say a document moved; this is how you walk the set. It is the feature most
+// specific to what this app is for -- reading documents an assistant is rewriting --
+// and the reason the marks are worth more here than the same paint would be in an
+// editor.
+
+/**
+ * Every open document with unseen changes, in the order they appear on screen: pane
+ * order, then tab order inside each. Stable on purpose, so repeated jumps walk the set
+ * once rather than bouncing between the same two.
+ */
+function changedOpenPaths() {
+  if (!changeMarksVisible) return [];
+
+  const seen = new Set();
+  const paths = [];
+
+  for (const pane of Layout.panes()) {
+    for (const path of pane.tabs) {
+      if (seen.has(path) || !changeMarks.has(path)) continue;
+      seen.add(path);
+      paths.push(path);
+    }
+  }
+
+  return paths;
+}
+
+function goToNextChanged() {
+  const paths = changedOpenPaths();
+
+  if (paths.length === 0) {
+    statusTextEl.textContent = "Nothing open has changed since you last looked.";
+    return;
+  }
+
+  const pane = Layout.activePane();
+  const from = paths.indexOf(pane ? pane.active : null);
+  const target = paths[(from + 1) % paths.length];
+
+  // Shown in whichever pane already holds it, preferring the active one, so the jump
+  // does not drag a document out from under the other pane.
+  const showing = Layout.panesShowing(target);
+  const host = showing.find(candidate => candidate.id === Layout.activeId) ?? showing[0];
+  if (!host) return;
+
+  rememberAnchors();
+  host.active = target;
+  Layout.setActive(host.id);
+  renderAll({ keepAnchors: false });
+
+  // Landing on the document is half the job; landing on the change is the other half.
+  // Overrides the restored reading position deliberately -- asking for the next change
+  // is asking to be taken to it.
+  const scroller = docElementOf(host);
+  const firstMark = scroller?.querySelector(
+    ".changed-block, .added-block, li.changed-item, li.added-item");
+  if (scroller && firstMark) scroller.scrollTop = Math.max(0, firstMark.offsetTop - 48);
+
+  statusTextEl.textContent = paths.length > 1
+    ? tabDisplayName(target) + " — changed " + (paths.indexOf(target) + 1)
+      + " of " + paths.length
+    : tabDisplayName(target) + " — the only document with unseen changes";
+}
+
+function markAllChangesSeen() {
+  const paths = changedOpenPaths();
+  if (paths.length === 0) {
+    statusTextEl.textContent = "Nothing open has unseen changes.";
+    return;
+  }
+
+  for (const path of paths) dismissChangeMarks(path);
+
+  refreshChangedDots();
+  refreshChangeChips();
+  statusTextEl.textContent = "Marked " + paths.length
+    + (paths.length === 1 ? " document" : " documents") + " as seen.";
+}
+
+const changedChipEl = document.getElementById("changedChip");
+
+/** The count, and the handle for walking the set. Hidden when there is nothing to say. */
+function refreshChangedChip() {
+  const count = changedOpenPaths().length;
+
+  changedChipEl.hidden = count === 0;
+  changedChipEl.textContent = count + " changed";
+  changedChipEl.title = count === 1
+    ? "One open document has unseen changes. Click to go to it (Ctrl+Shift+M)."
+    : count + " open documents have unseen changes. Click to walk them (Ctrl+Shift+M).";
+}
+
+changedChipEl.addEventListener("click", goToNextChanged);
+
 function refreshChangedDots() {
   for (const pane of Layout.panes()) {
     for (const path of pane.tabs) {
@@ -1393,6 +1492,7 @@ function refreshChangedDots() {
   // The panel shows the same markers, so it has to hear about this too. Cheap: with the
   // open set unchanged this only re-toggles classes on rows that already exist.
   syncFileStates();
+  refreshChangedChip();
 }
 
 /** Updates every pane's chip in place, so a reload does not rebuild the header. */
@@ -2422,6 +2522,16 @@ window.Commands = (() => {
   });
 
   define("toggleOutline", "Show or hide outline", "Ctrl+Shift+O", () => Panels.toggle("outline"));
+  define("nextChanged", "Go to next changed document", "Ctrl+Shift+M",
+    () => goToNextChanged(),
+    () => changedOpenPaths().length > 0,
+    "Nothing open has changed since you last looked.");
+
+  define("markAllChangesSeen", "Mark all changes as seen", "",
+    () => markAllChangesSeen(),
+    () => changedOpenPaths().length > 0,
+    "Nothing open has unseen changes.");
+
   define("toggleChangeMarks", "Show or hide change marks", "",
     () => setChangeMarksVisible(!changeMarksVisible));
   define("swapPanels", "Swap left and right panels", "", () => Panels.swap());
@@ -2493,6 +2603,7 @@ window.KEY_BINDINGS = [
   { key: "w", command: "closeTab" },
   { key: "e", command: "toggleSource" },
   { key: "m", command: "clearChangeMarks" },
+  { key: "m", shift: true, command: "nextChanged" },
   { key: "b", command: "toggleFiles" },
   { key: "o", shift: true, command: "toggleOutline" },
   { key: "0", command: "zoomReset" },
