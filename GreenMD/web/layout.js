@@ -29,25 +29,74 @@ window.Layout = (() => {
       anchors: {}, modes: {}, zoom: 1,
       // Paths pinned in this pane, in pin order. Kept as a plain array rather than a Set
       // so it survives the JSON round trip through the session untouched.
-      pinned: []
+      pinned: [],
+      // The one ephemeral tab in this pane, if any. One per pane rather than per window,
+      // because tabs belong to panes here -- peeking on the left must not disturb a peek
+      // on the right.
+      peek: null
     };
   }
 
   /**
-   * Pinned tabs sort to the front of the strip.
+   * Pinned tabs sort to the front of the strip, the peek slot to the end.
    *
-   * Enforced by reordering `tabs` itself rather than by keeping a second ordered list.
+   * Enforced by reordering `tabs` itself rather than keeping parallel ordered lists.
    * Everything downstream -- cycling, closing, dragging, the strip build -- already
    * reads `tabs` as the one true order, and a second order would be a second thing to
    * keep in step. Stable, so relative order inside each group survives.
    */
-  function normalizePinned(pane) {
-    if (!pane || !pane.pinned || pane.pinned.length === 0) return;
+  function normalizeOrder(pane) {
+    if (!pane) return;
 
-    const isPinned = path => pane.pinned.includes(path);
-    const head = pane.tabs.filter(isPinned);
-    const rest = pane.tabs.filter(path => !isPinned(path));
-    pane.tabs = [...head, ...rest];
+    const pinned = pane.pinned || [];
+    const isPinned = path => pinned.includes(path);
+    // A pinned peek is a contradiction, since pinning promotes. Pinned wins if both
+    // were somehow set, rather than the tab appearing in two groups at once.
+    const isPeek = path => pane.peek === path && !isPinned(path);
+
+    pane.tabs = [
+      ...pane.tabs.filter(isPinned),
+      ...pane.tabs.filter(path => !isPinned(path) && !isPeek(path)),
+      ...pane.tabs.filter(isPeek)
+    ];
+  }
+
+  /**
+   * Marks a tab as this pane's ephemeral one, replacing whatever held the slot.
+   *
+   * Nothing is protected from replacement, and it does not need to be: change marks are
+   * keyed by path and survive a tab closing, so reopening a replaced document brings its
+   * marks back. Anything you have actually invested in -- an edit, source mode, a pin --
+   * promotes the tab out of the slot before it can be replaced.
+   */
+  function setPeek(paneId, path) {
+    const target = pane(paneId);
+    if (!target) return null;
+
+    const replaced = target.peek && target.peek !== path ? target.peek : null;
+    target.peek = path;
+    normalizeOrder(target);
+    return replaced;
+  }
+
+  /** Makes a tab permanent. No-op unless it is the pane's peek. */
+  function promote(paneId, path) {
+    const target = pane(paneId);
+    if (!target || target.peek !== path) return false;
+
+    target.peek = null;
+    normalizeOrder(target);
+    return true;
+  }
+
+  function isPeek(paneId, path) {
+    const target = pane(paneId);
+    return !!target && target.peek === path;
+  }
+
+  function peekOf(paneId) {
+    const target = pane(paneId);
+    return target ? target.peek : null;
   }
 
   function setPinned(paneId, path, on) {
@@ -57,7 +106,7 @@ window.Layout = (() => {
     target.pinned = target.pinned.filter(p => p !== path);
     if (on) target.pinned.push(path);
 
-    normalizePinned(target);
+    normalizeOrder(target);
   }
 
   function isPinned(paneId, path) {
@@ -126,6 +175,10 @@ window.Layout = (() => {
       if (index === null) target.tabs.push(path);
       else target.tabs.splice(Math.max(0, Math.min(index, target.tabs.length)), 0, path);
     }
+    // A pushed tab lands at the end, which is the peek slot's place. Without this a new
+    // permanent tab would sit to the right of the ephemeral one.
+    normalizeOrder(target);
+
     if (activate) { target.active = path; activeId = target.id; }
     return target;
   }
@@ -142,6 +195,9 @@ window.Layout = (() => {
     delete target.modes[path];
     // A pin must not outlive its tab, or reopening the file would silently pin it.
     if (Array.isArray(target.pinned)) target.pinned = target.pinned.filter(p => p !== path);
+    // Nor a peek, or the next document opened here would replace a tab that is gone and
+    // the pane would be left with no ephemeral slot at all.
+    if (target.peek === path) target.peek = null;
 
     if (target.active === path) {
       target.active = target.tabs[Math.min(index, target.tabs.length - 1)] ?? null;
@@ -213,7 +269,7 @@ window.Layout = (() => {
       }
       // Dragging an unpinned tab into the pinned run, or the other way, would otherwise
       // leave the strip in an order the pin rule says is impossible.
-      normalizePinned(target);
+      normalizeOrder(target);
       addTab(toPaneId, path);
       return;
     }
@@ -244,7 +300,10 @@ window.Layout = (() => {
         // rather than at the top of a long document.
         anchors: { ...node.anchors },
         zoom: node.zoom ?? 1,
-        pinned: [...(node.pinned ?? [])]
+        pinned: [...(node.pinned ?? [])],
+        // Persisted so a restored session does not silently promote it: the tab comes
+        // back either way, and coming back permanent would be a decision nobody made.
+        peek: node.peek ?? null
       };
     }
     return {
@@ -265,7 +324,13 @@ window.Layout = (() => {
       restored.pinned = Array.isArray(data?.pinned)
         ? data.pinned.filter(path => restored.tabs.includes(path))
         : [];
-      normalizePinned(restored);
+      // Only if its tab actually came back, and never for a pinned path.
+      restored.peek = typeof data?.peek === "string"
+        && restored.tabs.includes(data.peek)
+        && !restored.pinned.includes(data.peek)
+        ? data.peek
+        : null;
+      normalizeOrder(restored);
       return restored;
     }
     const node = {
@@ -408,6 +473,7 @@ window.Layout = (() => {
     panes, pane, activePane, setActive, openPaths, panesShowing,
     addTab, closeTab, removePane, split, moveTab,
     setPinned, isPinned,
+    setPeek, promote, isPeek, peekOf,
     serialize, restore,
     dropZone, applyDrop,
     get root() { return root; },

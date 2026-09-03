@@ -250,6 +250,10 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 /* A seam after the last pinned tab, so the boundary is visible without a label. */
 .tab.pinned + .tab:not(.pinned) { border-left: 1px solid var(--border-strong); }
 
+/* The ephemeral tab: italic, the convention for "this one is not staying". No colour,
+   because every colour in this strip already means something. */
+.tab.peek .tab-label { font-style: italic; }
+
 /*
  * The Elsewhere section: open documents that no added folder covers. It takes its
  * natural height rather than a share of the panel -- it is usually two or three rows,

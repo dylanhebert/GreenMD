@@ -376,6 +376,38 @@ function tabDisplayName(path) {
   return stripMd(name);
 }
 
+// ---------- peek tabs ----------
+//
+// Browsing should not accumulate tabs. A single click in the Files panel, or following
+// a link inside a document, opens one ephemeral tab per pane that the next such open
+// replaces. Anything you invest in it -- an edit, source mode, a pin, a deliberate
+// double-click -- promotes it to a permanent tab first.
+//
+// Nothing is protected from replacement and nothing needs to be: change marks are keyed
+// by path and outlive a tab closing, so a replaced document brings its marks back when
+// you return to it.
+
+/**
+ * The path a pending open should land in the peek slot.
+ *
+ * Opening goes through the host -- the UI posts open-file and the document arrives back
+ * as doc-opened -- so the intent cannot be passed along with the call. Recorded here and
+ * consumed when the document arrives. Deliberately a single value: a second browse click
+ * before the first returns should win, which is what overwriting gives.
+ */
+let pendingPeek = null;
+
+function openAsPeek(path) {
+  pendingPeek = path;
+  post("open-file", path);
+}
+
+/** Makes the active tab permanent, if it was the ephemeral one. */
+function promoteActive(pane) {
+  if (!pane || !pane.active) return;
+  if (Layout.promote(pane.id, pane.active)) refreshPaneChrome(pane);
+}
+
 /** Every path pinned in any pane, so the tree can mark them too. */
 function pinnedPaths() {
   const pinned = new Set();
@@ -471,6 +503,7 @@ function buildTabstrip(pane) {
       + (doc && doc.missing ? " missing" : "")
       + (modeOf(pane, path) === "edit" ? " editing" : "")
       + (Layout.isPinned(pane.id, path) ? " pinned" : "")
+      + (Layout.isPeek(pane.id, path) ? " peek" : "")
       + (changeMarksVisible && changeMarks.has(path) ? " changed" : "");
     tab.dataset.path = path;
     tab.draggable = true;
@@ -683,6 +716,8 @@ function renderPane(pane, element) {
     Editor.setText(pane.id, pane.active, editor.value);
     paintHighlight(wrap);
     refreshDirtyMarks();
+    // Typing into it is investment: this tab stops being disposable.
+    promoteActive(pane);
   });
 
   // The highlight layer does not scroll itself; it follows the textarea.
@@ -848,6 +883,11 @@ function updateNotice(pane) {
 
 function toggleMode(pane) {
   if (!pane || !pane.active) return;
+
+  // Entering source mode is a declaration of intent, so the tab stops being
+  // disposable -- losing the editor because you clicked a file in the tree would be
+  // worse than one extra permanent tab.
+  Layout.promote(pane.id, pane.active);
 
   pane.modes[pane.active] = modeOf(pane, pane.active) === "edit" ? "view" : "edit";
   applyMode(pane);
@@ -1465,13 +1505,28 @@ panesEl.addEventListener("click", (event) => {
   if (href.startsWith("https://greenmd-open.local/")) {
     event.preventDefault();
     Layout.setActive(paneId);
-    post("open-file", decodeURIComponent(href.slice("https://greenmd-open.local/".length).split("#")[0]));
+    // Following a reference is browsing, so it peeks rather than accumulating a tab.
+    openAsPeek(decodeURIComponent(href.slice("https://greenmd-open.local/".length).split("#")[0]));
     return;
   }
 
   if (href.startsWith("http://") || href.startsWith("https://")) {
     event.preventDefault();
     post("open-external", href);
+  }
+});
+
+// Double-clicking a tab commits it. The plain click that precedes the double-click has
+// already activated it, so this only has to change its standing.
+panesEl.addEventListener("dblclick", (event) => {
+  const tab = event.target.closest(".tab[data-path]");
+  const paneEl = event.target.closest(".pane");
+  if (!tab || !paneEl) return;
+
+  if (Layout.promote(paneEl.dataset.paneId, tab.dataset.path)) {
+    const pane = Layout.pane(paneEl.dataset.paneId);
+    if (pane) refreshPaneChrome(pane);
+    statusTextEl.textContent = "Keeping " + tabDisplayName(tab.dataset.path) + " open.";
   }
 });
 
@@ -1575,6 +1630,9 @@ function openTabContextMenu(event, paneId, path) {
     contextItem(pinned ? "Unpin tab" : "Pin tab", {
       run: () => {
         Layout.setPinned(paneId, path, !pinned);
+        // A pinned ephemeral tab is a contradiction: pinning is the strongest "keep
+        // this" there is.
+        if (!pinned) Layout.promote(paneId, path);
         renderAll({ keepAnchors: true });
       }
     }),
@@ -1932,6 +1990,13 @@ host.addEventListener("message", (event) => {
         Editor.markSaved(payload.path);
         refreshDirtyMarks();
 
+        // Writing to a file is the clearest investment there is. Promoted in every pane
+        // holding it, since the same document can be peeked in one and permanent in
+        // another.
+        for (const pane of Layout.panesShowing(payload.path)) {
+          Layout.promote(pane.id, payload.path);
+        }
+
         // A save requested from the close prompt finishes the close.
         for (const [paneId, blockedPath] of [...closeBlocked]) {
           if (blockedPath !== payload.path) continue;
@@ -2004,14 +2069,31 @@ host.addEventListener("message", (event) => {
       // Launching with a file, or double-clicking one while the app is running,
       // should join the session rather than duplicate it: if the file is already
       // open somewhere, go to that tab instead of opening a second copy of it.
+      const asPeek = pendingPeek === payload.path;
+      pendingPeek = null;
+
       const showing = Layout.panesShowing(payload.path);
       const target = showing.find(pane => pane.id === Layout.activeId) ?? showing[0];
 
       if (target) {
+        // Already open somewhere. A browse click must not demote a tab you had already
+        // made permanent, so this only ever goes to the existing one.
         target.active = payload.path;
         Layout.setActive(target.id);
+
+        // A deliberate open of something currently being peeked commits it: asking for
+        // it by name, or double-clicking it, is not browsing.
+        if (!asPeek) Layout.promote(target.id, payload.path);
       } else {
         Layout.addTab(Layout.activeId, payload.path);
+
+        if (asPeek) {
+          const replaced = Layout.setPeek(Layout.activeId, payload.path);
+          // Closed after the new tab is in place, so the pane never briefly empties and
+          // collapses itself. Safe to close outright: the slot only ever holds a tab
+          // with nothing invested in it.
+          if (replaced) Layout.closeTab(Layout.activeId, replaced);
+        }
       }
 
       renderAll({ keepAnchors: false });
@@ -2368,7 +2450,22 @@ Zoom.configure({
 });
 
 Workspace.configure({
-  onOpenFile(path) { post("open-file", path); },
+  // Single click browses, double click commits. Ctrl+P and Explorer stay permanent:
+  // naming a file or leaving the app to pick one is deliberate, not browsing.
+  onOpenFile(path) { openAsPeek(path); },
+  onOpenFilePermanent(path) {
+    pendingPeek = null;
+
+    // Promoted here and not only when the document comes back: if it is already open,
+    // the host may have nothing new to send and the round trip would never arrive.
+    let promoted = false;
+    for (const pane of Layout.panesShowing(path)) {
+      if (Layout.promote(pane.id, path)) promoted = true;
+    }
+    if (promoted) renderAll({ keepAnchors: true });
+
+    post("open-file", path);
+  },
   onChanged() { saveSession(); },
   onCloseFolder(root) { post("close-workspace", root); },
   onAdoptFolder(root) {

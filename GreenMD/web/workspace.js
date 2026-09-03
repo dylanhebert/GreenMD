@@ -74,6 +74,15 @@ window.Workspace = (() => {
     quickListEl = document.getElementById("quickList");
 
     sectionsEl.addEventListener("click", onSectionClick);
+
+    // Double-click commits the file rather than peeking it. The single clicks that
+    // precede this have already opened it, so this only upgrades its standing -- which
+    // is why it needs no guard against the click handler having run.
+    sectionsEl.addEventListener("dblclick", event => {
+      const row = event.target.closest("[data-path]");
+      if (!row || row.dataset.dir) return;
+      if (hooks.onOpenFilePermanent) hooks.onOpenFilePermanent(row.dataset.path);
+    });
     quickInputEl.addEventListener("input", () => { quickIndex = 0; renderQuick(); });
     quickInputEl.addEventListener("keydown", onQuickKey);
     quickListEl.addEventListener("click", onQuickClick);
@@ -781,7 +790,12 @@ window.Workspace = (() => {
 
   function chooseQuick(path) {
     closeQuick();
-    if (path && hooks.onOpenFile) hooks.onOpenFile(path);
+    if (!path) return;
+
+    // Permanent, not a peek. Typing a name to find one document is deliberate; it is
+    // the opposite of clicking down a folder to see what is in it.
+    if (hooks.onOpenFilePermanent) hooks.onOpenFilePermanent(path);
+    else if (hooks.onOpenFile) hooks.onOpenFile(path);
   }
 
   function onQuickKey(event) {

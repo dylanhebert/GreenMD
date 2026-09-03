@@ -2344,6 +2344,166 @@ check("clearing asks the host for the file's text back",
       posted.filter(m => m.type === "get-text").pop()?.payload === E_A,
       String(posted.filter(m => m.type === "get-text").pop()?.payload));
 
+// --- peek tabs ---
+// Browsing should not accumulate tabs. One ephemeral tab per pane, replaced by the next
+// browse open, promoted by anything you actually invest in it.
+const P_DIR = "C:" + SEP + "peek";
+const P_A = P_DIR + SEP + "peek-a.md";
+const P_B = P_DIR + SEP + "peek-b.md";
+const P_C = P_DIR + SEP + "peek-c.md";
+const P_D = P_DIR + SEP + "peek-d.md";
+const P_E = P_DIR + SEP + "peek-e.md";
+const P_F = P_DIR + SEP + "peek-f.md";
+
+send("workspace", { workspaces: [{
+  root: P_DIR, name: "peek", truncated: false,
+  entries: [
+    { path: P_A, name: "peek-a.md", parent: P_DIR, dir: false },
+    { path: P_B, name: "peek-b.md", parent: P_DIR, dir: false },
+    { path: P_C, name: "peek-c.md", parent: P_DIR, dir: false },
+    { path: P_D, name: "peek-d.md", parent: P_DIR, dir: false },
+    { path: P_E, name: "peek-e.md", parent: P_DIR, dir: false },
+    { path: P_F, name: "peek-f.md", parent: P_DIR, dir: false }
+  ]
+}] });
+
+const treeRow = path => $$(".ws-section .tree-file").find(r => r.dataset.path === path);
+const clickRow = path =>
+  treeRow(path)?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+const dblClickRow = path =>
+  treeRow(path)?.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
+
+/** Single-clicking the tree only asks the host; the document arrives separately. */
+function browseOpen(path, title) {
+  clickRow(path);
+  send("doc-opened", labelDoc(path, title, P_DIR));
+}
+
+const beforeBrowse = posted.filter(m => m.type === "open-file").length;
+browseOpen(P_A, "peek-a.md");
+check("clicking a file in the tree asks the host to open it",
+      posted.filter(m => m.type === "open-file").length === beforeBrowse + 1);
+check("a browse open lands in the ephemeral slot",
+      tabFor(P_A)?.classList.contains("peek"), tabFor(P_A)?.className);
+
+const peekPaneId = tabFor(P_A).closest(".pane").dataset.paneId;
+const paneOrder = () =>
+  $$('[data-pane-id="' + peekPaneId + '"] .tab').map(t => t.dataset.path);
+
+check("the ephemeral tab sits last in the strip",
+      paneOrder()[paneOrder().length - 1] === P_A, paneOrder().join(" | "));
+
+// The whole point: browsing to something else reuses the slot.
+browseOpen(P_B, "peek-b.md");
+check("the next browse open replaces it rather than adding a tab",
+      !tabFor(P_A) && tabFor(P_B)?.classList.contains("peek"),
+      paneOrder().join(" | "));
+
+// Double-clicking the tree commits it.
+dblClickRow(P_B);
+check("double-clicking in the tree makes it permanent",
+      !tabFor(P_B)?.classList.contains("peek"), tabFor(P_B)?.className);
+
+browseOpen(P_C, "peek-c.md");
+check("a committed tab is not replaced by the next browse",
+      !!tabFor(P_B) && tabFor(P_C)?.classList.contains("peek"),
+      paneOrder().join(" | "));
+check("the ephemeral tab is still last, after the permanent one",
+      paneOrder()[paneOrder().length - 1] === P_C, paneOrder().join(" | "));
+
+// Double-clicking the tab itself commits it too.
+tabFor(P_C).dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
+check("double-clicking the tab makes it permanent",
+      !tabFor(P_C)?.classList.contains("peek"), tabFor(P_C)?.className);
+
+// Source mode is a declaration of intent.
+browseOpen(P_A, "peek-a.md");
+check("browsing back gives a fresh ephemeral tab",
+      tabFor(P_A)?.classList.contains("peek"));
+key("e", { ctrlKey: true });
+check("entering source mode makes it permanent",
+      !tabFor(P_A)?.classList.contains("peek"), tabFor(P_A)?.className);
+key("e", { ctrlKey: true });
+
+// Pinning is the strongest keep there is, so it cannot leave a tab ephemeral.
+browseOpen(P_B, "peek-b.md");
+rightClickTab(P_B);
+contextItemByLabel("Pin tab")?.dispatchEvent(
+  new window.MouseEvent("click", { bubbles: true }));
+check("pinning makes it permanent",
+      !tabFor(P_B)?.classList.contains("peek"), tabFor(P_B)?.className);
+// Compared against an unpinned tab rather than asserting index 0: something else in
+// this suite is already pinned, so position zero is not this test's to claim.
+check("a pinned tab sorts ahead of the unpinned ones",
+      paneOrder().indexOf(P_B) < paneOrder().indexOf(P_C),
+      paneOrder().join(" | "));
+
+// Quick open is deliberate, not browsing. Committed by clicking the row -- Enter is not
+// how the rest of the suite drives this, and a first draft of this test used it and
+// silently selected nothing.
+window.eval("Commands.run('goToFile')");
+$("#quickInput").value = "peek-d";
+$("#quickInput").dispatchEvent(new window.Event("input", { bubbles: true }));
+const beforeQuick = posted.filter(m => m.type === "open-file").length;
+$("#quickList .quick-row")?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+send("doc-opened", labelDoc(P_D, "peek-d.md", P_DIR));
+
+check("quick open asks the host to open the file",
+      posted.filter(m => m.type === "open-file").length === beforeQuick + 1,
+      String(posted.filter(m => m.type === "open-file").pop()?.payload));
+check("quick open does not create an ephemeral tab",
+      !!tabFor(P_D) && !tabFor(P_D).classList.contains("peek"),
+      tabFor(P_D)?.className);
+
+// The property that makes replacement safe: marks are keyed by path, not by tab, so a
+// replaced document brings them back. Uses a path nothing has promoted yet -- P_A was
+// committed by the source-mode check above and is no longer ephemeral.
+browseOpen(P_E, "peek-e.md");
+check("the marks case starts from an ephemeral tab",
+      tabFor(P_E)?.classList.contains("peek"), tabFor(P_E)?.className);
+
+// Reused for the reopen below: the host always sends a file's *current* content, so a
+// reopen must carry the rewritten html. Sending the original instead makes it match the
+// mark baseline again, which legitimately clears the marks -- which is exactly how a
+// first draft of this test convinced itself the feature was broken.
+const rewrittenE = {
+  path: P_E, title: "peek-e.md", folder: P_DIR,
+  html: '<h1 id="l">peek-e.md</h1><p>rewritten elsewhere</p>',
+  outline: [{ level: 1, text: "peek-e.md", id: "l" }],
+  missing: false, loadedAt: new Date().toISOString()
+};
+
+send("doc-updated", rewrittenE);
+check("an ephemeral tab still shows its change marks",
+      tabFor(P_E)?.classList.contains("changed"), tabFor(P_E)?.className);
+
+// Browsing to something already permanently open activates it and leaves the ephemeral
+// slot alone: nothing new needed the slot, so nothing is evicted. Worth pinning down --
+// the alternative, treating the slot as "the last thing I looked at" and closing it,
+// would throw away a tab you never asked to lose.
+browseOpen(P_C, "peek-c.md");
+check("jumping to an already-open tab does not evict the ephemeral one",
+      !!tabFor(P_E) && tabFor(P_E).classList.contains("peek"),
+      paneOrder().join(" | "));
+
+// A genuinely new browse target does take the slot.
+browseOpen(P_F, "peek-f.md");
+check("a new browse target replaces the ephemeral tab",
+      !tabFor(P_E) && tabFor(P_F)?.classList.contains("peek"),
+      paneOrder().join(" | "));
+
+clickRow(P_E);
+send("doc-opened", rewrittenE);
+check("returning to it brings the change marks back",
+      tabFor(P_E)?.classList.contains("changed"), tabFor(P_E)?.className);
+check("and it is ephemeral again", tabFor(P_E)?.classList.contains("peek"),
+      tabFor(P_E)?.className);
+
+// Persisted, so a restored session does not silently promote it.
+const peekState = window.eval("JSON.stringify(Layout.serialize())");
+check("the ephemeral slot rides along in the session",
+      peekState.includes('"peek"'), peekState.slice(0, 120));
+
 // --- report ---
 console.log("");
 for (const r of results) {
