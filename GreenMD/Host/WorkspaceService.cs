@@ -81,9 +81,20 @@ public sealed class WorkspaceService : IDisposable
 
             var watcher = new FileSystemWatcher(full)
             {
-                // Content changes are handled per open document by FileWatchService.
-                // This one only cares about the shape of the tree.
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName,
+                // LastWrite as well as the tree's shape. This used to watch shape only,
+                // on the grounds that content changes were the open documents' business
+                // -- true until the tree started carrying a size and a timestamp per
+                // file so the panel could mark files nobody has open. Without this the
+                // rescan never happens and those fingerprints are never refreshed, so
+                // the marks only ever appeared for documents that were already open,
+                // which is the case that did not need them.
+                //
+                // Attributes stays out deliberately: OneDrive hydration and dehydration
+                // are attribute changes, and watching them means rescanning on every
+                // sync housekeeping pass.
+                NotifyFilter = NotifyFilters.FileName
+                             | NotifyFilters.DirectoryName
+                             | NotifyFilters.LastWrite,
                 IncludeSubdirectories = true,
                 InternalBufferSize = 64 * 1024
             };
@@ -91,6 +102,9 @@ public sealed class WorkspaceService : IDisposable
             watcher.Created += (_, _) => ScheduleRescan();
             watcher.Deleted += (_, _) => ScheduleRescan();
             watcher.Renamed += (_, _) => ScheduleRescan();
+            // Debounced like the others, and the rescan only enumerates directories --
+            // it opens no files, so a burst of writes costs a walk and not a read.
+            watcher.Changed += (_, _) => ScheduleRescan();
             watcher.Error += (_, _) => ScheduleRescan();
             watcher.EnableRaisingEvents = true;
 

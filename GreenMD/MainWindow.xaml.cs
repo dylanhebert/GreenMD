@@ -415,6 +415,17 @@ public partial class MainWindow : Window
     /// document, so the common read-only path does not carry the source as well as
     /// the rendered HTML.
     /// </summary>
+    /// <summary>
+    /// Tells the UI the application wrote this file, so the Files panel does not mark it
+    /// as changed on disk. A save of your own is not news.
+    ///
+    /// Posted from the host rather than inferred in the UI because there is more than
+    /// one way a write happens -- Ctrl+S answers with save-result, but ticking a task
+    /// checkbox writes the file and answers with nothing at all, so a UI-side guess
+    /// would have missed it and dotted the file the reader had just ticked.
+    /// </summary>
+    private void PostSelfWrite(string path) => Post("file-written", path);
+
     private void SendText(string path)
     {
         var document = _documents.Get(path);
@@ -471,6 +482,7 @@ public partial class MainWindow : Window
         Post("save-result", new { path, saved, conflict });
 
         if (!saved) return;
+        PostSelfWrite(path);
 
         var document = _documents.Get(path);
         if (document is not null) Post("doc-updated", Describe(document));
@@ -642,6 +654,8 @@ public partial class MainWindow : Window
             Post("error", new { message = $"Could not write to {Path.GetFileName(path)}." });
             return;
         }
+
+        PostSelfWrite(path);
 
         var refreshed = _documents.Get(path);
         if (refreshed is not null) Post("doc-updated", Describe(refreshed));

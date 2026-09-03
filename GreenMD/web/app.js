@@ -1429,6 +1429,16 @@ function changeChipText(marks) {
 /** path -> the fingerprint the reader last marked as seen. Persisted. */
 let seenFiles = new Map();
 
+/**
+ * Paths this application wrote, awaiting the rescan that will report them.
+ *
+ * The folder watcher now notices content changes, which is what makes any of this work
+ * -- and it does not distinguish your save from someone else's write. Without this,
+ * pressing Ctrl+S would put a dot on the file you had just saved, and ticking a
+ * checkbox would dot the document you were reading.
+ */
+const selfWritten = new Set();
+
 /** Paths whose fingerprint no longer matches what was last seen. */
 let changedOnDisk = new Set();
 
@@ -1456,7 +1466,17 @@ function reconcileSeenFiles() {
     if (now === null) continue;
 
     if (!seenFiles.has(entry.path)) { seenFiles.set(entry.path, now); baselined = true; continue; }
-    if (seenFiles.get(entry.path) !== now) changedOnDisk.add(entry.path);
+    if (seenFiles.get(entry.path) === now) continue;
+
+    // Our own write: record the new state as seen instead of reporting it.
+    if (selfWritten.has(entry.path)) {
+      selfWritten.delete(entry.path);
+      seenFiles.set(entry.path, now);
+      baselined = true;
+      continue;
+    }
+
+    changedOnDisk.add(entry.path);
   }
 
   if (baselined) saveSession();
@@ -2462,6 +2482,12 @@ host.addEventListener("message", (event) => {
       reportTitle();
       break;
     }
+
+    case "file-written":
+      // Held until the rescan arrives, since the fingerprint to record is not known
+      // until the folder is walked again.
+      if (typeof payload === "string") selfWritten.add(payload);
+      break;
 
     case "preview-rendered": {
       // Ignored if the buffer went clean while the render was in flight -- the answer

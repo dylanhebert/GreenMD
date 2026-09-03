@@ -2925,6 +2925,29 @@ check("mark all as seen clears a file-level dot too", !rowChanged(F_ONE),
 send("workspace", folderScan("2026-09-02T11:00:00Z", "2026-09-01T10:00:00Z"));
 check("the new state is what counts as seen from now on", !rowChanged(F_ONE));
 
+// Your own save must not dot the file you just saved. The folder watcher notices
+// content changes -- which is what makes any of this work -- and it cannot tell your
+// write from anyone else's, so the host says which writes were ours.
+send("workspace", folderScan("2026-09-02T13:00:00Z", "2026-09-01T10:00:00Z"));
+check("a write nobody claimed is reported", rowChanged(F_ONE));
+window.eval("Commands.run('markAllChangesSeen')");
+
+send("file-written", F_ONE);
+send("workspace", folderScan("2026-09-02T14:00:00Z", "2026-09-01T10:00:00Z"));
+check("a write the app made is not reported", !rowChanged(F_ONE),
+      "saving would otherwise dot the file you had just saved");
+check("and that write becomes the new baseline",
+      (() => {
+        send("workspace", folderScan("2026-09-02T14:00:00Z", "2026-09-01T10:00:00Z"));
+        return !rowChanged(F_ONE);
+      })());
+
+// The claim is spent once used, so the next write from elsewhere still reports.
+send("workspace", folderScan("2026-09-02T15:00:00Z", "2026-09-01T10:00:00Z"));
+check("a later write from elsewhere is reported again", rowChanged(F_ONE),
+      "one file-written must not excuse every future change to that file");
+window.eval("Commands.run('markAllChangesSeen')");
+
 // Right-clicking a folder header offers the same thing for one folder.
 send("workspace", folderScan("2026-09-03T12:00:00Z", "2026-09-03T12:00:00Z"));
 check("both files changed now", rowChanged(F_ONE) && rowChanged(F_TWO));
