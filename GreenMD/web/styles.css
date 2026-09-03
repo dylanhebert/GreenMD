@@ -1393,3 +1393,35 @@ body[data-docmap] .editor::-webkit-scrollbar { display: none; }
 }
 .status-changed:hover { background: #362f1c; border-color: #6b6220; }
 .status-changed[hidden] { display: none; }
+
+/* ---------- unsaved edits, shown in the rendered view ---------- */
+/*
+ * A dashed bar in the unsaved green, deliberately not a fifth colour. Amber means
+ * rewritten elsewhere, green means new elsewhere, purple means pinned, and this same
+ * green already means unsaved on the tab -- so a dashed version of it reads as "your
+ * edit, not yet committed" and ties to the bullet that is already saying so. Dashed
+ * rather than solid because it is provisional: the file does not look like this yet.
+ */
+.doc > .pending-block,
+.doc > .pending-added { position: relative; }
+
+.doc > .pending-block::after,
+.doc > .pending-added::after {
+  content: "";
+  position: absolute;
+  left: -16px;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 3px dashed var(--live);
+}
+
+/* A new block is filled in a little, so added and edited are still distinguishable. */
+.doc > .pending-added { background: rgba(1, 169, 130, .05); border-radius: 4px; }
+
+.doc li.pending-item::marker,
+.doc li.pending-added-item::marker { color: var(--live); }
+.doc li.pending-added-item { background: rgba(1, 169, 130, .06); border-radius: 4px; }
+
+/* On the map, in the same green. */
+.docmap-mark-pending { background: var(--live); opacity: .75; }

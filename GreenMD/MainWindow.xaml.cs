@@ -194,6 +194,10 @@ public partial class MainWindow : Window
                 if (payload.ValueKind == JsonValueKind.String) SendText(payload.GetString()!);
                 break;
 
+            case "render-preview":
+                RenderPreview(payload);
+                break;
+
             case "save-doc":
                 if (payload.ValueKind == JsonValueKind.Object) await SaveAsync(payload);
                 break;
@@ -417,6 +421,36 @@ public partial class MainWindow : Window
         if (document is null || document.Missing) return;
 
         Post("doc-text", new { path = document.Path, text = document.RawText });
+    }
+
+    /// <summary>
+    /// Renders text the reader has typed but not saved, so the rendered view can show
+    /// what the file is about to become rather than what it currently is.
+    ///
+    /// Nothing is written and no document state is touched: this reads the UI's buffer
+    /// and answers with HTML. The renderer is already a pure function of its input, so
+    /// there is nothing to keep in step -- the preview cannot drift from what a save
+    /// would actually produce, because it is the same call.
+    /// </summary>
+    private void RenderPreview(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object
+            || !payload.TryGetProperty("path", out var pathElement)
+            || !payload.TryGetProperty("text", out var textElement)
+            || pathElement.GetString() is not { Length: > 0 } path
+            || textElement.GetString() is not { } text)
+        {
+            return;
+        }
+
+        var rendered = MarkdownRenderer.Render(text, Path.GetDirectoryName(path));
+
+        Post("preview-rendered", new
+        {
+            path,
+            html = rendered.Html,
+            outline = rendered.Outline
+        });
     }
 
     private async Task SaveAsync(JsonElement request)

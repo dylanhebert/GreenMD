@@ -80,6 +80,25 @@ window.Editor = (() => {
     return entry && entry.loaded ? entry.text : null;
   }
 
+  /**
+   * The unsaved text for a path, whichever pane holds it.
+   *
+   * Buffers are keyed by pane *and* path so the same file can be source in one pane and
+   * rendered in another, but a preview of what the file will become is a property of the
+   * file, not of a pane. Prefers a dirty buffer: a clean one is the file already.
+   */
+  function textForPath(path) {
+    let clean = null;
+
+    for (const [key, entry] of buffers) {
+      if (!key.endsWith("::" + path) || !entry.loaded) continue;
+      if (entry.text !== entry.base) return entry.text;
+      clean = entry.text;
+    }
+
+    return clean;
+  }
+
   /** Marks a buffer saved. Called once the host confirms the write landed. */
   function markSaved(path) {
     for (const [key, entry] of buffers) {
@@ -109,7 +128,7 @@ window.Editor = (() => {
   }
 
   return {
-    configure, buffer, isDirty, isPathDirty, isStale,
+    configure, buffer, isDirty, isPathDirty, isStale, textForPath,
     receiveText, setText, textOf, markSaved, noteExternalChange, forget
   };
 })();

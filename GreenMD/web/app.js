@@ -164,6 +164,16 @@ function mapBands(pane) {
     for (const hit of scroller.querySelectorAll("mark.find-hit, mark.find-current")) {
       bands.push({ kind: "find", top: hit.offsetTop / total, height: 2 / total });
     }
+
+    // The fourth marker kind: blocks you have edited but not saved.
+    const pending = ".pending-block, .pending-added, li.pending-item, li.pending-added-item";
+    for (const block of scroller.querySelectorAll(pending)) {
+      bands.push({
+        kind: "pending",
+        top: block.offsetTop / total,
+        height: block.offsetHeight / total
+      });
+    }
   }
 
   return bands;
@@ -419,10 +429,16 @@ function paintDoc(pane) {
     return;
   }
 
-  scroller.innerHTML = doc.html;
+  // An unsaved buffer wins over the file on disk, so the rendered view shows what the
+  // document is about to become rather than what it currently is. Falls back to the
+  // saved render until the host answers, so there is never a blank frame.
+  const preview = previews.get(pane.active);
+  scroller.innerHTML = preview ? preview.html : doc.html;
+
   HL.highlightAll(scroller);
   addCopyButtons(scroller);
   applyChangeMarks(scroller, pane.active);
+  applyPendingMarks(scroller, pane.active);
   renderMermaid(scroller);
   restoreAnchor(scroller, pane.anchors[pane.active]);
 
@@ -845,6 +861,8 @@ function renderPane(pane, element) {
     refreshDirtyMarks();
     // Typing into it is investment: this tab stops being disposable.
     promoteActive(pane);
+    // And the rendered view should be showing what this will look like.
+    requestPreview(pane.active);
   });
 
   // The highlight layer does not scroll itself; it follows the textarea.
@@ -1039,6 +1057,11 @@ function toggleMode(pane) {
 
   pane.modes[pane.active] = modeOf(pane, pane.active) === "edit" ? "view" : "edit";
   applyMode(pane);
+
+  // Coming back out to a document with unsaved edits: the rendered view still holds the
+  // render of the file, so it has to be repainted to pick up the preview. applyMode only
+  // swaps which of the two views is hidden -- it does not re-render either of them.
+  if (modeOf(pane, pane.active) !== "edit" && previews.has(pane.active)) paintDoc(pane);
   refreshPaneChrome(pane);
   refreshDirtyMarks();
   // The two modes draw the map from different sources, and this path does not go
@@ -1380,6 +1403,88 @@ function changeChipText(marks) {
  * survives opening the tab and every re-render, and goes away only when the marks
  * are dismissed -- a reminder that there are changes not yet marked as seen.
  */
+// ---------- unsaved edits, shown in the rendered view ----------
+//
+// Switching out of source mode used to show the file as it is on disk, which is the one
+// version you already know -- your edits were invisible until you saved, so the only
+// way to see what a change looked like rendered was to commit it first.
+//
+// The buffer is rendered by the host and painted instead, with the blocks you changed
+// marked. It reuses the change-mark diff exactly: same block comparison, different two
+// inputs. Saving needs no special case at all -- the file and the buffer become the
+// same text, the diff comes out empty, and the marks go on their own.
+
+/** path -> { html, outline } for a buffer that has not been saved. */
+const previews = new Map();
+
+/** path -> the diff between the saved render and the unsaved one. */
+const pendingMarks = new Map();
+
+const PREVIEW_DEBOUNCE_MS = 350;
+let previewTimer = null;
+
+/**
+ * Asks the host to render a dirty buffer.
+ *
+ * Debounced, because this is a round trip and a markdown parse per keystroke would be
+ * work nobody asked for -- the rendered view is not where you are typing, so it can
+ * afford to be a third of a second behind.
+ */
+function requestPreview(path) {
+  if (!path) return;
+
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => {
+    if (!Editor.isPathDirty(path)) { dropPreview(path); return; }
+
+    const text = Editor.textForPath(path);
+    if (text === null) return;
+
+    post("render-preview", { path, text });
+  }, PREVIEW_DEBOUNCE_MS);
+}
+
+/** Back to the file on disk: the buffer is saved, or its edits were discarded. */
+function dropPreview(path) {
+  // Both deletes run unconditionally. Written as `a.delete(p) || b.delete(p)` this
+  // short-circuited the moment the first succeeded, so the marks outlived the preview
+  // and the repaint put them straight back.
+  const hadPreview = previews.delete(path);
+  const hadMarks = pendingMarks.delete(path);
+  if (!hadPreview && !hadMarks) return;
+
+  for (const pane of Layout.panesShowing(path)) {
+    if (pane.active === path && modeOf(pane, path) !== "edit") paintDoc(pane);
+  }
+  refreshAllDocMaps();
+}
+
+/**
+ * Marks the blocks that differ between the saved file and the unsaved buffer.
+ *
+ * Deliberately a different treatment rather than a fifth colour: amber means rewritten
+ * elsewhere, green means new elsewhere, purple means pinned, and the live green already
+ * means unsaved on the tab. A dashed bar in that same green says "your edit, not yet
+ * committed" and ties to the bullet that is already telling you so.
+ */
+function applyPendingMarks(scroller, path) {
+  const marks = pendingMarks.get(path);
+  if (!marks) return;
+
+  const blocks = [...scroller.children];
+  for (const index of marks.modified) blocks[index]?.classList.add("pending-block");
+  for (const index of marks.added) blocks[index]?.classList.add("pending-added");
+
+  for (const [blockIndex, itemDiff] of marks.lists ?? []) {
+    const list = blocks[blockIndex];
+    if (!list) continue;
+
+    const items = [...list.children];
+    for (const index of itemDiff.modified) items[index]?.classList.add("pending-item");
+    for (const index of itemDiff.added) items[index]?.classList.add("pending-added-item");
+  }
+}
+
 // ---------- navigating to what changed ----------
 //
 // The marks say a document moved; this is how you walk the set. It is the feature most
@@ -1994,7 +2099,7 @@ document.getElementById("discardConfirm").addEventListener("click", () => {
   const { paneId, paths } = discardTarget;
   closeDiscardPrompt();
 
-  for (const path of paths) Editor.forget(paneId, path);
+  for (const path of paths) { Editor.forget(paneId, path); dropPreview(path); }
 
   // The buffers are gone, so the editor needs the file's text back rather than being
   // left showing edits it no longer holds.
@@ -2245,6 +2350,29 @@ host.addEventListener("message", (event) => {
       break;
     }
 
+    case "preview-rendered": {
+      // Ignored if the buffer went clean while the render was in flight -- the answer
+      // would describe a document that no longer differs from the file.
+      if (!Editor.isPathDirty(payload.path)) { dropPreview(payload.path); break; }
+
+      previews.set(payload.path, { html: payload.html, outline: payload.outline });
+
+      // The same block diff the change marks use, with the saved render and the unsaved
+      // one as its two inputs instead of two versions of the file.
+      const saved = docs.get(payload.path);
+      const diff = saved ? diffDocument(saved.html, payload.html) : null;
+      if (diff && diff.count > 0) pendingMarks.set(payload.path, diff);
+      else pendingMarks.delete(payload.path);
+
+      for (const pane of Layout.panesShowing(payload.path)) {
+        if (pane.active === payload.path && modeOf(pane, payload.path) !== "edit") {
+          paintDoc(pane);
+        }
+      }
+      refreshAllDocMaps();
+      break;
+    }
+
     case "doc-text":
       Editor.receiveText(payload.path, payload.text);
       for (const pane of Layout.panesShowing(payload.path)) applyMode(pane);
@@ -2268,6 +2396,10 @@ host.addEventListener("message", (event) => {
         for (const pane of Layout.panesShowing(payload.path)) {
           Layout.promote(pane.id, payload.path);
         }
+
+        // The file now is the buffer, so there is nothing pending to show. Marks clear
+        // by themselves rather than by a rule: the two inputs to the diff became equal.
+        dropPreview(payload.path);
 
         // A save requested from the close prompt finishes the close.
         for (const [paneId, blockedPath] of [...closeBlocked]) {

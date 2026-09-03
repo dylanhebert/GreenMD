@@ -2800,6 +2800,83 @@ check("marking the changes seen clears the map's bands",
 window.eval("Commands.run('toggleDocMap')");
 await nextFrame();
 
+// --- unsaved edits shown in the rendered view ---
+// Leaving source mode used to show the file as it is on disk, so your edits were
+// invisible until you committed them. The buffer is rendered by the host and painted
+// instead, with the blocks you changed marked.
+const V_PATH = "C:" + SEP + "pending" + SEP + "draft.md";
+const savedHtml = '<h1 id="p">Draft</h1><p>the saved paragraph</p><p>second</p>';
+
+send("doc-opened", {
+  path: V_PATH, title: "draft.md", folder: "C:" + SEP + "pending",
+  html: savedHtml, outline: [{ level: 1, text: "Draft", id: "p" }],
+  missing: false, loadedAt: new Date().toISOString()
+});
+
+const vPane = () => tabFor(V_PATH).closest(".pane");
+const vDoc = () => vPane().querySelector(".doc");
+
+key("e", { ctrlKey: true });
+send("doc-text", { path: V_PATH, text: "# Draft\n\nthe saved paragraph\n\nsecond\n" });
+
+const vEditor = () => vPane().querySelector("textarea.editor");
+const beforePreview = posted.filter(m => m.type === "render-preview").length;
+
+vEditor().value = "# Draft\n\nthe EDITED paragraph\n\nsecond\n";
+vEditor().dispatchEvent(new window.Event("input", { bubbles: true }));
+
+check("typing does not ask for a render on every keystroke",
+      posted.filter(m => m.type === "render-preview").length === beforePreview,
+      "a round trip and a markdown parse per keypress would be work nobody asked for");
+
+// Past the debounce.
+await new Promise(resolve => setTimeout(resolve, 500));
+
+const previewAsk = posted.filter(m => m.type === "render-preview").pop();
+check("once typing settles it asks the host to render the buffer",
+      posted.filter(m => m.type === "render-preview").length === beforePreview + 1
+      && previewAsk?.payload?.path === V_PATH,
+      String(previewAsk?.payload?.path));
+check("it sends the unsaved text, not the file's",
+      (previewAsk?.payload?.text || "").includes("EDITED"),
+      previewAsk?.payload?.text);
+
+// The host answers with the buffer's render.
+const previewHtml = '<h1 id="p">Draft</h1><p>the EDITED paragraph</p><p>second</p>';
+send("preview-rendered", {
+  path: V_PATH, html: previewHtml,
+  outline: [{ level: 1, text: "Draft", id: "p" }]
+});
+
+key("e", { ctrlKey: true });
+check("the rendered view shows the unsaved version",
+      (vDoc().textContent || "").includes("EDITED"),
+      vDoc().textContent);
+check("the block you changed is marked as pending",
+      vPane().querySelectorAll(".pending-block, .pending-added").length > 0,
+      vPane().querySelectorAll(".pending-block").length + " pending blocks");
+check("the untouched block is not marked",
+      [...vDoc().children].filter(el => el.classList.contains("pending-block")).length === 1,
+      [...vDoc().children].map(el => el.className).join(" | "));
+
+// Saving makes the file and the buffer the same text, so the marks go on their own
+// rather than by a rule that has to remember to clear them.
+send("save-result", { path: V_PATH, saved: true, conflict: false });
+check("saving clears the pending marks",
+      vPane().querySelectorAll(".pending-block, .pending-added").length === 0);
+check("and the rendered view goes back to the file on disk",
+      (vDoc().textContent || "").includes("the saved paragraph"),
+      vDoc().textContent);
+
+// A render that lands after the buffer went clean describes a document that no longer
+// differs from the file, so it is dropped rather than painted.
+send("preview-rendered", {
+  path: V_PATH, html: previewHtml,
+  outline: [{ level: 1, text: "Draft", id: "p" }]
+});
+check("a preview arriving for a clean buffer is ignored",
+      !(vDoc().textContent || "").includes("EDITED"), vDoc().textContent);
+
 // --- report ---
 console.log("");
 for (const r of results) {
