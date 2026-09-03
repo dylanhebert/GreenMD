@@ -1328,7 +1328,19 @@ mark.find-current {
 
 /* Markers keep the colours they carry everywhere else, so the map needs no legend. */
 .docmap-mark { position: absolute; left: 0; right: 0; min-height: 1px; }
-.docmap-mark-heading { background: var(--border-strong); }
+
+/*
+ * A tick at the right edge, not a full-width band. Full width it painted straight over
+ * the heading text drawn on the canvas beneath -- two representations of the same
+ * heading, and the overlay won. The ribbon has no canvas and therefore no text, so
+ * there the band is the only thing marking a heading and keeps its full width.
+ */
+.docmap-mark-heading {
+  left: auto;
+  width: 6px;
+  background: var(--border-strong);
+}
+.docmap[data-style="ribbon"] .docmap-mark-heading { left: 0; width: auto; }
 .docmap-mark-changed { background: var(--changed); }
 .docmap-mark-added   { background: var(--added); }
 .docmap-mark-find    { background: var(--accent); }

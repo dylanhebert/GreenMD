@@ -2633,6 +2633,16 @@ const mapRule = cssText.match(/^\.docmap\s*\{[^}]*\}/m)?.[0] ?? "";
 check("the map does not change the cursor",
       !/cursor:/.test(mapRule), mapRule.replace(/\s+/g, " "));
 
+// The heading marker used to span the map and paint straight over the heading text
+// drawn on the canvas underneath -- two representations of one heading, and the DOM
+// overlay won. jsdom cannot see the canvas at all, so this guards the rule instead.
+const headingMarkRule = cssText.match(/^\.docmap-mark-heading\s*\{[^}]*\}/m)?.[0] ?? "";
+check("the heading marker is an edge tick, not a full-width band",
+      /left:\s*auto/.test(headingMarkRule) && /width:\s*\d+px/.test(headingMarkRule),
+      headingMarkRule.replace(/\s+/g, " "));
+check("the ribbon, which has no text to cover, keeps a full-width band",
+      /\[data-style="ribbon"\][^{]*\.docmap-mark-heading\s*\{[^}]*left:\s*0/.test(cssText));
+
 // The style choice and the on/off state both survive a restart.
 const mapState = window.eval("JSON.stringify(Layout.serialize())") + "";
 check("the map state is session state",

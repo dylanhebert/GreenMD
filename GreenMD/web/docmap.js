@@ -38,6 +38,9 @@ window.DocMap = (() => {
   const HEADING_TEXT_LEVELS = 2;
   const HEADING_TEXT_PX = { 1: 9, 2: 7 };
 
+  /** Below this the strip cannot hold type at any size, so the ribbon gets bars. */
+  const HEADING_TEXT_MIN_WIDTH = 40;
+
   /**
    * One colour per block kind, so a table, a diagram and a paragraph are distinguishable
    * without anything being legible. Muted on purpose: the markers painted over this are
@@ -260,10 +263,21 @@ window.DocMap = (() => {
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, cssWidth, height);
 
+    // Headings that will be drawn as words are held back for a second pass. Painting in
+    // document order let whatever followed a heading bury its text, and a heading is the
+    // one thing on here that has to survive: it is the landmark the rest is measured
+    // against.
+    const asText = rect =>
+      rect.text && rect.level <= HEADING_TEXT_LEVELS && cssWidth >= HEADING_TEXT_MIN_WIDTH;
+
+    const headings = [];
+
     for (const rect of rects) {
       // A blank line draws nothing. Clamping it up to a one-pixel stub instead is what
       // welded paragraphs together into one mass.
       if (!rect.weight || rect.weight <= 0) continue;
+
+      if (asText(rect)) { headings.push(rect); continue; }
 
       const y = rect.top * height;
       // The gap is what separates one line from the next; without it consecutive
@@ -273,30 +287,6 @@ window.DocMap = (() => {
       const span = Math.max(1, rect.weight * (cssWidth - left));
 
       context.fillStyle = FILL[rect.kind] || FILL.prose;
-
-      // Top-level headings are drawn as words rather than a bar, so a glance tells you
-      // *which* section you are looking at. Only where there is room: the ribbon is too
-      // narrow for type at any size, and a long document scales headings below the point
-      // of legibility -- in both cases it falls back to the bar, which still marks the
-      // position.
-      if (rect.text && rect.level <= HEADING_TEXT_LEVELS && cssWidth >= 40) {
-        const size = Math.min(HEADING_TEXT_PX[rect.level] || 6, Math.max(5, barHeight + 2));
-
-        if (size >= 5.5) {
-          context.save();
-          // Clipped rather than measured and truncated: a heading that overruns should
-          // run off the edge like text does, not end in an ellipsis nobody can read.
-          context.beginPath();
-          context.rect(2, y - 1, cssWidth - 4, Math.max(size + 2, barHeight + 2));
-          context.clip();
-
-          context.font = "600 " + size.toFixed(1) + "px 'Segoe UI', system-ui, sans-serif";
-          context.textBaseline = "top";
-          context.fillText(rect.text, 2, y);
-          context.restore();
-          continue;
-        }
-      }
 
       // A table is drawn as columns with gaps, so it reads as a grid rather than a
       // block. Everything else is one bar.
@@ -310,6 +300,31 @@ window.DocMap = (() => {
       }
 
       context.fillRect(left, y, span, barHeight);
+    }
+
+    for (const rect of headings) {
+      const size = HEADING_TEXT_PX[rect.level] || 6;
+      const y = rect.top * height;
+
+      context.save();
+
+      // The slot is cleared first, so the text keeps its legibility on a long document
+      // where a heading's own share of the map is thinner than the type. Overlapping a
+      // neighbouring bar slightly is the right trade: headings are rare and they are
+      // what you are scanning for.
+      context.clearRect(0, y - 1, cssWidth, size + 2);
+
+      // Clipped rather than measured and truncated: a heading that overruns should run
+      // off the edge the way text does, not end in an ellipsis nobody can read.
+      context.beginPath();
+      context.rect(2, y - 1, cssWidth - 4, size + 2);
+      context.clip();
+
+      context.fillStyle = FILL.heading;
+      context.font = "600 " + size + "px 'Segoe UI', system-ui, sans-serif";
+      context.textBaseline = "top";
+      context.fillText(rect.text, 2, y);
+      context.restore();
     }
   }
 
