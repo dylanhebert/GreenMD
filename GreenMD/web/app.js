@@ -1238,7 +1238,14 @@ function renderAll({ keepAnchors = true, save = true } = {}) {
 // accumulate until they are dismissed on purpose. Nothing fades on its own.
 
 /** path -> the rendered html the reader last marked as seen. */
-const changeBaselines = new Map();
+/**
+ * path -> the document reduced to block fingerprints, as the reader last saw it.
+ *
+ * Persisted, which is the whole reason it is fingerprints and not the rendered HTML it
+ * used to be: marks that die with the process cannot describe a document rewritten
+ * while the app was closed, which is exactly when you most want them.
+ */
+let seenBlocks = new Map();
 
 /** path -> { changed: Set<blockIndex>, removedBefore: Set<blockIndex>, count } */
 const changeMarks = new Map();
@@ -1358,26 +1365,94 @@ function diffDocument(oldHtml, newHtml) {
   return marks;
 }
 
+/**
+ * A short non-cryptographic hash. FNV-1a, which is plenty here: a collision costs one
+ * missed mark, not a wrong answer about a file's contents.
+ */
+function hashString(text) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index++) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+/**
+ * A document reduced to what the diff actually needs: one hash per block, plus per-item
+ * hashes for lists and the tag, which is all the drill-down inspects.
+ *
+ * The point of the reduction is that this can be persisted. The baseline used to be the
+ * rendered HTML, held in memory -- so block-level marks died with the process, and a
+ * document rewritten while the app was closed came back with a dot in the panel and
+ * nothing highlighted in it. A few hundred bytes a document survives a restart; a few
+ * hundred kilobytes would not have been worth writing.
+ */
+function fingerprintBlocks(html) {
+  const holder = document.createElement("template");
+  holder.innerHTML = html;
+
+  return [...holder.content.children].map(el => ({
+    h: hashString(el.outerHTML),
+    t: el.tagName,
+    i: (el.tagName === "UL" || el.tagName === "OL")
+      ? [...el.children].map(li => hashString(li.outerHTML))
+      : null
+  }));
+}
+
+/**
+ * The same diff as diffDocument, over fingerprints instead of markup.
+ *
+ * diffBlocks only ever compares its entries with ===, so hashes drop straight in. Only
+ * the list drill-down needed more than a hash, and it needs exactly two things -- the
+ * tag, to know a list is still a list, and the item hashes.
+ */
+function diffFingerprints(before, now) {
+  const marks = diffBlocks(before.map(b => b.h), now.map(b => b.h));
+  marks.lists = new Map();
+
+  for (const [newIndex, oldIndex] of marks.pairs) {
+    const wasBlock = before[oldIndex];
+    const isBlock = now[newIndex];
+    if (!wasBlock || !isBlock || wasBlock.t !== isBlock.t) continue;
+    if (!wasBlock.i || !isBlock.i) continue;
+
+    const itemDiff = diffBlocks(wasBlock.i, isBlock.i);
+    if (itemDiff.count === 0) continue;   // the list element changed, not its items
+
+    marks.lists.set(newIndex, itemDiff);
+    marks.modified.delete(newIndex);
+    marks.count += itemDiff.count - 1;
+  }
+
+  return marks;
+}
+
 function noteDocChanged(path, html) {
+  const now = fingerprintBlocks(html);
+
   if (selfChanged.delete(path)) {
     // The reader's own save or checkbox tick is not news to them.
-    changeBaselines.set(path, html);
+    seenBlocks.set(path, now);
     changeMarks.delete(path);
+    saveSession();
     return;
   }
 
-  const baseline = changeBaselines.get(path);
-  if (baseline === undefined) { changeBaselines.set(path, html); return; }
-  if (baseline === html) { changeMarks.delete(path); return; }
+  const before = seenBlocks.get(path);
+  if (before === undefined) { seenBlocks.set(path, now); saveSession(); return; }
 
-  changeMarks.set(path, diffDocument(baseline, html));
+  const diff = diffFingerprints(before, now);
+  if (diff.count === 0) changeMarks.delete(path);
+  else changeMarks.set(path, diff);
 }
 
 function dismissChangeMarks(path) {
   const doc = docs.get(path);
   if (!doc) return;
 
-  changeBaselines.set(path, doc.html);
+  seenBlocks.set(path, fingerprintBlocks(doc.html));
   changeMarks.delete(path);
   // One gesture, both kinds. Clearing the blocks while the file-level dot stayed put
   // would leave the row still claiming there is something to look at.
@@ -1511,6 +1586,19 @@ function reconcileSeenFiles() {
 
   if (baselined) saveSession();
   if (before !== changedOnDisk.size) { syncFileStates(); refreshChangedChip(); }
+}
+
+/**
+ * The block record, trimmed to documents still worth remembering.
+ *
+ * Kept for anything open or in the recent list. Without a bound it would accumulate a
+ * few hundred bytes for every document ever opened, forever, in a file that is read at
+ * every launch -- and a baseline for a document you have not touched in months is not
+ * worth carrying.
+ */
+function prunedSeenBlocks() {
+  const keep = new Set([...Layout.openPaths(), ...recents]);
+  return new Map([...seenBlocks].filter(([path]) => keep.has(path)));
 }
 
 /** Records a path's current state as seen, clearing its dot. */
@@ -2413,6 +2501,11 @@ function restoreSession(state) {
   if (Array.isArray(state.collapsedRoots)) Workspace.setCollapsedRoots(state.collapsedRoots);
   if (state.sectionWeights) Workspace.setSectionWeights(state.sectionWeights);
   if (typeof state.elsewhereHeight === "number") Workspace.setElsewhereSize(state.elsewhereHeight);
+  if (state.seenBlocks && typeof state.seenBlocks === "object") {
+    seenBlocks = new Map(Object.entries(state.seenBlocks)
+      .filter(([, blocks]) => Array.isArray(blocks)));
+  }
+
   if (state.seenFiles && typeof state.seenFiles === "object") {
     // Persisted so a file rewritten while the app was closed still reads as changed.
     seenFiles = new Map(Object.entries(state.seenFiles));
@@ -2460,6 +2553,7 @@ function saveSession() {
       elsewhereHeight: Workspace.elsewhereSize(),
       docMap: { enabled: DocMap.isEnabled(), style: DocMap.currentStyle() },
       seenFiles: Object.fromEntries(seenFiles),
+      seenBlocks: Object.fromEntries(prunedSeenBlocks()),
       panels: Panels.snapshot(),
       recents,
       changeMarksVisible,

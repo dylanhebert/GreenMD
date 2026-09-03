@@ -3037,6 +3037,60 @@ check("it records the fingerprint, not just the path",
       String(seenRecord[F_ONE] || "").includes("2026-09-03"),
       String(seenRecord[F_ONE]));
 
+// --- block marks that survive a restart ---
+// The baseline used to be rendered HTML held in memory, so marks died with the process:
+// a document rewritten while the app was closed came back with a dot in the panel and
+// nothing highlighted in it. It is a hash per block now, which is small enough to keep.
+const R_PATH = "C:" + SEP + "restart" + SEP + "doc.md";
+function restartDoc(body, extra) {
+  return { path: R_PATH, title: "doc.md", folder: "C:" + SEP + "restart",
+           html: '<h1 id="r">Doc</h1><p>' + body + "</p>"
+               + '<ul><li>one</li><li>' + (extra || "two") + "</li></ul>",
+           outline: [{ level: 1, text: "Doc", id: "r" }],
+           missing: false, loadedAt: new Date().toISOString() };
+}
+
+send("doc-opened", restartDoc("original"));
+check("first sight of a document marks nothing",
+      !tabFor(R_PATH)?.classList.contains("changed"), tabFor(R_PATH)?.className);
+
+// What the session would carry.
+await new Promise(resolve => setTimeout(resolve, 600));
+const blockSession = posted.filter(m => m.type === "save-session").pop();
+const storedBlocks = blockSession?.payload?.seenBlocks || {};
+
+check("the block record is carried in the session",
+      Array.isArray(storedBlocks[R_PATH]), Object.keys(storedBlocks).join(" | "));
+check("it stores hashes, not the markup",
+      JSON.stringify(storedBlocks[R_PATH] || "").length < 400
+      && !JSON.stringify(storedBlocks[R_PATH] || "").includes("<p>"),
+      JSON.stringify(storedBlocks[R_PATH] || "").slice(0, 120));
+
+// Now the restart: the record comes back and the document arrives rewritten.
+send("session", { seenBlocks: storedBlocks });
+send("doc-opened", restartDoc("REWRITTEN while the app was closed"));
+
+check("a document rewritten while closed is marked",
+      tabFor(R_PATH)?.classList.contains("changed"), tabFor(R_PATH)?.className);
+check("and the marks reach the blocks, not just the tab",
+      tabFor(R_PATH).closest(".pane").querySelectorAll(".changed-block, .added-block").length > 0,
+      "this is what the dot was promising and could not deliver before");
+
+// The list drill-down has to survive the reduction too: the fingerprint keeps per-item
+// hashes and the tag precisely so a rewritten bullet still marks one bullet.
+window.eval("Commands.run('markAllChangesSeen')");
+await new Promise(resolve => setTimeout(resolve, 600));
+const afterSeen = posted.filter(m => m.type === "save-session").pop();
+send("session", { seenBlocks: afterSeen?.payload?.seenBlocks || {} });
+send("doc-opened", restartDoc("REWRITTEN while the app was closed", "two, edited"));
+
+const rPane = () => tabFor(R_PATH).closest(".pane");
+check("a rewritten list item marks the item",
+      rPane().querySelectorAll("li.changed-item, li.added-item").length === 1,
+      rPane().querySelectorAll("li.changed-item, li.added-item").length + " items marked");
+check("and not the whole list",
+      rPane().querySelectorAll("ul.changed-block").length === 0);
+
 // --- report ---
 console.log("");
 for (const r of results) {
