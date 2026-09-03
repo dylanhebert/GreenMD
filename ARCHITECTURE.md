@@ -95,9 +95,13 @@ The layout is a tree. Tabs belong to panes, not to the window.
 Session   { workspaces[], activeWorkspaceId }
   Workspace { id, name, rootPath, layout, expandedDirs[] }
     LayoutNode = Split { dir, sizes[], children[] }
-               | Pane  { id, tabs[], activeTabId }
+               | Pane  { id, tabs[], activeTabId, pinned[], peek }
       Tab { id, path, scrollAnchor, mode }
 ```
+
+The session also carries two records of *what the reader has already seen*: block
+fingerprints per document, and a `size:mtime` pair per file in a workspace. Both are
+described under **Change marks**.
 
 Documents live in a **separate map keyed by absolute path** — content, rendered HTML,
 watcher registration, content hash, dirty flag. Tabs hold only a path reference. So the
@@ -211,6 +215,54 @@ silently — they are not news to the person who made them. A View-menu toggle h
 paint without stopping the tracking underneath, and the choice persists with the
 session.
 
+The baseline is **persisted, as fingerprints** — one hash per top-level block, plus the
+tag and per-item hashes for lists. It began as the rendered HTML held in memory, which
+meant the marks died with the process: a document rewritten while the app was closed came
+back with no highlighting at all, and that is exactly the case worth marking. Hashes drop
+straight in because the diff compares its entries with `===` and nothing else; the tag and
+the item hashes exist only for the list drill-down, which needs to know a list is still a
+list and which bullet moved. A few hundred bytes a document is worth writing to
+`session.json`; the markup was a few hundred kilobytes.
+
+The record is pruned to documents that are open or in the recent list. Unbounded it would
+grow for every document ever opened, forever, in a file read at every launch — and a
+baseline for something untouched for months answers a question nobody is asking. FNV-1a
+rather than anything cryptographic: a collision costs one missed mark, not a wrong answer
+about a file's contents, and this runs on every reload.
+
+A file opened for the very first time has no earlier version to compare against. It says
+so, rather than showing a dot that leads to nothing highlighted.
+
+### Files nobody has opened
+
+The marks above need the rendered HTML, so they only ever describe files that have been
+opened. The Files panel answers a different question — *what moved while I was away* —
+and it has to answer it for files that were never opened, which rules out reading them: a
+workspace is frequently a OneDrive folder, and reading a placeholder triggers a download.
+
+So the tree tracks `size:mtime` per path, taken from the directory walk. `GetFiles()` on a
+`DirectoryInfo` fills in `Length` and `LastWriteTimeUtc` from the enumeration itself
+without opening anything. A path whose pair differs from the recorded one gets a dot. That
+is a weaker signal than the block diff — same size and timestamp means no dot, whatever
+the bytes say — and it is the strongest one available without touching the file.
+
+Two things had to be true before it worked at all:
+
+- **The watcher needs `NotifyFilters.LastWrite`.** It had `FileName | DirectoryName`,
+  enough to notice a file appearing but not a file being rewritten in place.
+- **The app's own writes must not count.** With `LastWrite` on, saving a file dotted it a
+  moment later. The host posts `file-written` from both save paths and the UI drops that
+  path before it becomes a mark.
+
+Ordering matters more than it looks. `Post("session", ...)` has to precede
+`RestoreWorkspaces(...)`. The other way round, the tree meets an empty seen-record,
+baselines every file as freshly seen, and then has the real record dropped on top —
+which presents as every file in the folder carrying a dot on the first launch after a
+change. Marking a folder seen rewalks it and rewrites every pair.
+
+Mtimes cross the bridge as ISO strings rather than ticks, which are larger than the
+integers JavaScript represents exactly.
+
 ### OneDrive
 
 A OneDrive-synced folder is a normal place to keep documents, and every file in one
@@ -234,6 +286,58 @@ Watchers on network shares can also silently miss events. A `LastWriteTime` poll
 seconds, for open documents only, is the backstop.
 
 ## Chrome
+
+### The tab strip
+
+Four things make a strip of ten tabs legible, in the order they were added:
+
+- **Labels drop `.md` and disambiguate.** Two tabs both called `README` become
+  `README — api` and `README — web`, qualified by as many parent segments as it takes
+  to tell them apart. Only tabs that actually collide pay for the suffix.
+- **Pinned tabs** sort to the front of their pane and carry a coloured top edge. Pinning
+  is per pane, which follows from tabs belonging to panes rather than to the window.
+- **Peek tabs.** A single click opens a document in the pane's one peek slot — italic,
+  last in the strip, replaced by the next single click. A double-click, an edit, or a drag
+  promotes it to a real tab. This is the fix for a strip filling up with documents you
+  only glanced at, and it is most of why tab grouping stayed deferred.
+- **Markers are real elements, not pseudo-elements.** The changed dot, the unsaved bullet
+  and the editing pencil were `::before`/`::after` on the label, which truncates — so on
+  a narrow tab the marker was clipped off, and `changed` and `editing` fought over the
+  single `::after`. The tree rows had the same bug.
+
+Double-click is tracked by path against a 400 ms window rather than by the `dblclick`
+event. Clicking a tab re-renders the strip, destroying the element between the two clicks,
+so `dblclick` never fires on it. A synthetic `dblclick` in a test proves the handler works
+and says nothing about whether the event ever arrives.
+
+### The Files panel
+
+Every marker a tab shows, the matching tree row shows, in the same colours. A change you
+can only discover by opening the file is a change you will miss.
+
+Documents that no open folder covers collect in an **Elsewhere** section at the bottom,
+grouped by parent folder and resizable against the trees above it. Without it, a file
+opened from outside every workspace lived in the tab strip and nowhere else: visible until
+closed, then gone. Containment is tested with a trailing separator, so `C:\work-notes` is
+not treated as inside `C:\work`.
+
+### Document map
+
+A VS Code-style minimap in the right gutter, toggled in the View menu between the full
+map, a thin ribbon, and an ordinary scrollbar. It is a canvas redrawn from the DOM in the
+rendered view and from the source lines in edit mode, and it paints block kinds in
+distinct colours — code, quote, table, diagram, list, heading — because a map of
+undifferentiated grey bars tells you nothing you did not already know. Headings are drawn
+as text at H1 and H2, in a second pass over a `clearRect`, so nothing can bury the one
+thing that makes the map navigable. Change bands reuse the mark colours.
+
+Its bugs were all one bug: **the map describes content nobody tells it about.** It went
+stale when content arrived over `doc-content`, again over `doc-text`, and again when marks
+were dismissed. The fix that held hangs the refresh on `refreshChangedDots`, the single
+function every mark-mover already passes through. It is also offset from its container
+rather than from the scroller, because in source mode the scroller is the
+absolutely-positioned textarea, whose `offsetTop` is 0 — which put the map over the pane
+header.
 
 ### Document header
 
@@ -294,6 +398,10 @@ ignored rather than stranding the window off-screen.
 - **M8 — sitting beside an agent.** Tab context menu, tab reordering along the strip,
   change marks diffed against the version last marked as seen (item-level inside
   lists) with a View toggle, and the window reopening where it was closed. **Done.**
+- **M9 — finding your way around.** Pinned and peek tabs, collision-aware tab labels,
+  an Elsewhere section for documents no open folder covers, every tab marker mirrored
+  into the Files panel, the document map, unsaved edits rendered before they are saved,
+  and change tracking that reaches files nobody has opened. **Done.**
 
 ### Deferred deliberately
 
@@ -304,6 +412,23 @@ ignored rather than stranding the window off-screen.
   Roughly 80 lines keyed on per-block hashes, worth doing only if streaming re-renders
   visibly flicker.
 - **KaTeX and PDF export.** Not needed for the target use case.
+- **Tab groups.** Revisited once pinning and peek tabs were in, on the theory that the
+  two of them together might remove the need. Panes are already a grouping mechanism and
+  folders already group implicitly in the labels and in Elsewhere, so a third answer to
+  "these documents belong together" needs to earn its place. The one thing groups do that
+  panes cannot is *collapse*: a split costs screen width permanently, a collapsed group
+  costs about one tab. If the strip ever feels crowded again the version to build is
+  implicit folder groups -- auto-grouped, collapsible, nothing to name or maintain --
+  rather than manual named ones, which are only right for a group that cuts across
+  folders.
+- **A C# test project.** The largest hole in this repo, and the reason it is listed as
+  deferred rather than missing: it is a decision nobody has made, not a task nobody has
+  done. Two consequences are live right now. The host's save-conflict check cannot fire
+  (see *Editing*), and fixing it properly means splitting `Document.Hash` in two, which
+  would make the task-checkbox path report false conflicts with nothing to catch it. And
+  the workspace watcher's filter -- the thing that decides whether a file change is
+  noticed at all -- has no test, so the suite drives the messages it produces rather than
+  the fact that it produces them. Both were found by hand, after shipping.
 
 ## Testing
 
@@ -313,7 +438,19 @@ the UI with the same messages the host sends, and asserts on the resulting DOM.
 This exists because the obvious smoke test is useless here: a JavaScript exception
 leaves the window blank while the process happily keeps running, so "the process is
 alive" proves nothing. The suite covers tabs, splits, per-pane zoom, live updates,
-the workspace tree, quick-open scoring, and session round-tripping.
+the workspace tree, quick-open scoring, and session round-tripping — 509 assertions.
+
+What it has repeatedly failed to cover is worth stating, because every instance cost a
+shipped bug: **an assertion that produces the event it is testing proves only that the
+handler exists.** A synthetic `dblclick` passed while real double-clicking did nothing. A
+conflict test that starts by handing the UI a `save-result` saying `conflict: true` tests
+the reporting and never the detecting. Tests that drive the same entry point the feature
+was written against will pass on a feature reachable no other way. Where a test can drive
+the real gesture — two ordinary clicks rather than one synthetic event — it does.
+
+Two more scripts run beside it: `tests/lint-sources.mjs` catches escape sequences mangled
+by scripted edits, and `tests/verify-vendor.mjs` checks the vendored mermaid bundle
+against its recorded SHA-256.
 
 jsdom is **test-only and deliberately not a dependency of the application** — nothing it
 pulls in ever ships. It is a declared devDependency in `tests/package.json`, which is
@@ -367,6 +504,12 @@ Edit state is keyed by pane *and* path, so the same file can be source in one pa
 rendered in another. Saving repaints the rendered pane, which yields a side-by-side live
 preview with no code written specifically for it.
 
+Switching back to the rendered view without saving does not hide the edit. The UI asks the
+host to render the buffer as it stands and marks the blocks that differ with a dashed
+green bar, deliberately distinct from the solid bars of a change on disk — so *what did I
+actually change* is answerable without living in the source. The preview render is
+debounced at 350 ms and discarded when the buffer is saved or the edit is cleared.
+
 Three rules protect the file:
 
 - **A save is refused if the file changed on disk since it was loaded.** The pane shows
@@ -407,6 +550,10 @@ Unsaved state is therefore made loud rather than subtle: a bullet on the tab, an
 "unsaved — Ctrl+S" badge in the header, and a refusal to close the tab. Closing a dirty
 tab used to discard the edit silently, which is the one thing this must never do; it now
 keeps the tab open and offers save, discard, or keep editing.
+
+Right-clicking that badge offers to discard the file's unsaved edits, behind a confirm. It
+hangs off the badge rather than the Edit button because the badge is the thing that means
+"there is unsaved work here", and it is scoped to that one file for the same reason.
 
 ### Mermaid diagrams
 
@@ -540,6 +687,8 @@ and regressing loudly.
 | `Ctrl+B` | show or hide the file list |
 | `Ctrl+Shift+O` | show or hide the outline |
 | `Ctrl+S` | save |
+| `Ctrl+M` | mark this document's changes as seen |
+| `Ctrl+Shift+M` | go to the next changed document |
 | `Ctrl+W` | close the current tab |
 | `Ctrl+Tab` | cycle tabs in the active pane |
 | `Ctrl+\` | split the pane right (`Ctrl+Shift+\` splits down) |
