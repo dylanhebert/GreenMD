@@ -60,7 +60,7 @@ window.navigator.clipboard = { writeText: async () => {} };
 // jsdom implements no layout, so these are absent. The app only uses them for effect.
 window.Element.prototype.scrollIntoView = function () {};
 
-for (const file of ["highlight.js", "zoom.js", "layout.js", "workspace.js", "find.js", "editor.js", "panels.js", "menu.js", "app.js"]) {
+for (const file of ["highlight.js", "zoom.js", "layout.js", "workspace.js", "find.js", "editor.js", "panels.js", "docmap.js", "menu.js", "app.js"]) {
   try {
     window.eval(readFileSync(WEB + file, "utf8"));
   } catch (e) {
@@ -1234,7 +1234,12 @@ function childOrder() {
   return [...$(".pane").children].map(c => c.className.split(" ")[0]);
 }
 
-const EXPECTED = ["tabstrip", "dochead", "pane-notice", "doc", "editor-wrap", "drop-hint"];
+// The document map is absolutely positioned like the drop hint, so it takes no part in
+// the pane's flex column -- but it is still a child, and this list is deliberately the
+// whole truth about the children rather than the ones that happen to matter for layout.
+// It sits before the drop hint so a drag still paints over everything.
+const EXPECTED = ["tabstrip", "dochead", "pane-notice", "doc", "editor-wrap",
+                  "docmap", "drop-hint"];
 
 send("doc-opened", editDoc("order check"));
 check("pane children are in the documented order",
@@ -2528,6 +2533,69 @@ check("and it is ephemeral again", tabFor(P_E)?.classList.contains("peek"),
 const peekState = window.eval("JSON.stringify(Layout.serialize())");
 check("the ephemeral slot rides along in the session",
       peekState.includes('"peek"'), peekState.slice(0, 120));
+
+// --- document map ---
+// Off by default, so nothing here changes until it is asked for.
+// jsdom performs no layout, so the bands' positions are all zero here. What is testable
+// is that the right number of them exist and carry the right kinds; where they sit on
+// screen needs --dump-layout.
+const mapEl = () => $(".pane .docmap");
+
+check("every pane has a map element", !!mapEl());
+check("it starts hidden", mapEl()?.hidden === true);
+check("nothing reserves width while it is off",
+      (window.document.body.dataset.docmap || "") === "",
+      window.document.body.dataset.docmap);
+
+window.eval("Commands.run('toggleDocMap')");
+check("the View menu toggle shows it", mapEl()?.hidden === false);
+check("it defaults to the full style, shape and markers",
+      mapEl()?.dataset.style === "full", mapEl()?.dataset.style);
+check("the reserved width is announced on the body, for the CSS to key off",
+      window.document.body.dataset.docmap === "full",
+      window.document.body.dataset.docmap);
+check("the canvas is drawn in the full style",
+      mapEl()?.querySelector(".docmap-canvas")?.hidden === false);
+
+window.eval("Commands.run('cycleDocMapStyle')");
+check("the style toggle switches to the ribbon",
+      mapEl()?.dataset.style === "ribbon", mapEl()?.dataset.style);
+check("the ribbon draws no canvas",
+      mapEl()?.querySelector(".docmap-canvas")?.hidden === true);
+check("the ribbon still reserves its own width",
+      window.document.body.dataset.docmap === "ribbon",
+      window.document.body.dataset.docmap);
+
+window.eval("Commands.run('cycleDocMapStyle')");
+check("cycling returns to the full style", mapEl()?.dataset.style === "full");
+
+// Markers come from real offsets, so a document with headings has heading bands.
+send("doc-opened", {
+  path: "C:" + SEP + "map" + SEP + "mapped.md", title: "mapped.md",
+  folder: "C:" + SEP + "map",
+  html: '<h1 id="a">One</h1><p>body</p><h2 id="b">Two</h2><p>more</p>',
+  outline: [{ level: 1, text: "One", id: "a" }, { level: 2, text: "Two", id: "b" }],
+  missing: false, loadedAt: new Date().toISOString()
+});
+check("headings become marker bands",
+      $$(".pane .docmap-mark-heading").length >= 2,
+      $$(".pane .docmap-mark").length + " bands");
+
+// The viewport window is the part that says where you are.
+check("the map carries a viewport window", !!mapEl()?.querySelector(".docmap-viewport"));
+
+// The style choice and the on/off state both survive a restart.
+const mapState = window.eval("JSON.stringify(Layout.serialize())") + "";
+check("the map state is session state",
+      typeof mapState === "string" && mapState.length > 0);
+
+window.eval("Commands.run('toggleDocMap')");
+check("toggling it off hides it again", mapEl()?.hidden === true);
+check("and gives the reserved width back",
+      (window.document.body.dataset.docmap || "") === "",
+      window.document.body.dataset.docmap);
+check("the style command greys out while the map is off",
+      window.eval("Commands.get('cycleDocMapStyle').available() === false"));
 
 // --- report ---
 console.log("");

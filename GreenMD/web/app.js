@@ -116,6 +116,75 @@ function docElementOf(pane) {
   return panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"] .doc`);
 }
 
+function mapElementOf(pane) {
+  return panesEl.querySelector(`[data-pane-id="${CSS.escape(pane.id)}"] .docmap`);
+}
+
+/** Whichever element is actually scrolling in this pane right now. */
+function activeScroller(pane) {
+  if (!pane || !pane.active) return null;
+  return modeOf(pane, pane.active) === "edit" ? editorElementOf(pane) : docElementOf(pane);
+}
+
+/**
+ * Marker bands for a pane's map, as fractions of the document's height.
+ *
+ * Positions come from the same offsets the outline and scroll anchoring already use, so
+ * the map cannot disagree with them about where a heading is.
+ */
+function mapBands(pane) {
+  const scroller = activeScroller(pane);
+  if (!pane || !pane.active || !scroller) return [];
+
+  const editing = modeOf(pane, pane.active) === "edit";
+  const total = scroller.scrollHeight || 1;
+  const bands = [];
+
+  if (!editing) {
+    for (const heading of scroller.querySelectorAll("h1[id],h2[id],h3[id],h4[id],h5[id],h6[id]")) {
+      bands.push({ kind: "heading", top: heading.offsetTop / total, height: 2 / total });
+    }
+
+    // Change marks are the reason this is worth more here than in an editor: they say
+    // where a document moved, not merely that it did.
+    // Whole blocks and individual list items, which is the granularity the marks
+    // themselves use -- a rewritten bullet inside an untouched list should show.
+    const changed = ".changed-block, .added-block, li.changed-item, li.added-item";
+    for (const block of scroller.querySelectorAll(changed)) {
+      const isAdded = block.classList.contains("added-block")
+        || block.classList.contains("added-item");
+
+      bands.push({
+        kind: isAdded ? "added" : "changed",
+        top: block.offsetTop / total,
+        height: block.offsetHeight / total
+      });
+    }
+
+    for (const hit of scroller.querySelectorAll("mark.find-hit, mark.find-current")) {
+      bands.push({ kind: "find", top: hit.offsetTop / total, height: 2 / total });
+    }
+  }
+
+  return bands;
+}
+
+function refreshDocMap(pane) {
+  const mapEl = mapElementOf(pane);
+  if (!mapEl) return;
+
+  DocMap.render(mapEl, {
+    scroller: activeScroller(pane),
+    editor: editorElementOf(pane),
+    editing: !!pane.active && modeOf(pane, pane.active) === "edit",
+    bands: mapBands(pane)
+  });
+}
+
+function refreshAllDocMaps() {
+  for (const pane of Layout.panes()) refreshDocMap(pane);
+}
+
 // ---------- scroll anchoring ----------
 
 function captureAnchor(scroller) {
@@ -708,6 +777,11 @@ function renderPane(pane, element) {
       requestAnimationFrame(() => {
         scheduled = false;
         if (Layout.activeId === pane.id) syncOutlineHighlight();
+
+        // Only the viewport window moves: the bars and markers have not changed, and
+        // redrawing a canvas on every scroll frame would be work for nothing.
+        const mapEl = mapElementOf(pane);
+        if (mapEl && !mapEl.hidden) DocMap.renderViewport(mapEl, scroller);
       });
     }
 
@@ -754,6 +828,13 @@ function renderPane(pane, element) {
 
   wrap.append(highlight, editor);
   element.append(wrap);
+
+  // Overlaid on the right edge rather than placed in a flex row beside the scroller,
+  // which keeps the pane's children as they were. It goes before the drop hint so the
+  // hint still paints over everything during a drag.
+  const map = DocMap.build();
+  DocMap.bindDrag(map, () => activeScroller(pane));
+  element.append(map);
 
   const hint = document.createElement("div");
   hint.className = "drop-hint";
@@ -1022,6 +1103,9 @@ function renderAll({ keepAnchors = true, save = true } = {}) {
   const pane = Layout.activePane();
   Workspace.highlight(pane && pane.active ? pane.active : null);
   syncFileStates();
+
+  // After the panes are laid out, since every band is measured from a real offset.
+  refreshAllDocMaps();
 
   for (const p of Layout.panes()) applyMode(p);
   refreshDirtyMarks();
@@ -1915,6 +1999,10 @@ function restoreSession(state) {
   if (Array.isArray(state.collapsedRoots)) Workspace.setCollapsedRoots(state.collapsedRoots);
   if (state.sectionWeights) Workspace.setSectionWeights(state.sectionWeights);
   if (typeof state.elsewhereHeight === "number") Workspace.setElsewhereSize(state.elsewhereHeight);
+  if (state.docMap && typeof state.docMap === "object") {
+    DocMap.setEnabled(state.docMap.enabled === true);
+    DocMap.setStyle(state.docMap.style);
+  }
 
   if (state.layout) Layout.restore(state.layout);
 
@@ -1945,6 +2033,7 @@ function saveSession() {
       collapsedRoots: Workspace.collapsedRoots(),
       sectionWeights: Workspace.sectionWeights(),
       elsewhereHeight: Workspace.elsewhereSize(),
+      docMap: { enabled: DocMap.isEnabled(), style: DocMap.currentStyle() },
       panels: Panels.snapshot(),
       recents,
       changeMarksVisible,
@@ -2281,6 +2370,20 @@ window.Commands = (() => {
   define("resetPaneWidths", "Reset panel widths", "", () => Panels.resetWidths());
 
   const zoomScope = () => Zoom.hoveredScope() || ("pane:" + Layout.activeId);
+  define("toggleDocMap", "Show or hide document map", "", () => {
+    DocMap.setEnabled(!DocMap.isEnabled());
+    statusTextEl.textContent = DocMap.isEnabled()
+      ? "Document map shown."
+      : "Document map hidden — the scrollbar is back.";
+  });
+
+  define("cycleDocMapStyle", "Document map style", "", () => {
+    DocMap.setStyle(DocMap.currentStyle() === "full" ? "ribbon" : "full");
+    statusTextEl.textContent = DocMap.currentStyle() === "full"
+      ? "Document map: shape and markers."
+      : "Document map: markers only.";
+  }, () => DocMap.isEnabled(), "Show the document map first.");
+
   define("zoomIn", "Larger text", "Ctrl+=", () => Zoom.nudge(zoomScope(), 1));
   define("zoomOut", "Smaller text", "Ctrl+-", () => Zoom.nudge(zoomScope(), -1));
   define("zoomReset", "Reset text size", "Ctrl+0", () => Zoom.set(zoomScope(), 1));
@@ -2522,6 +2625,20 @@ Panels.configure({
   },
   onPersist() { saveSession(); }
 });
+
+DocMap.configure({
+  onChanged() {
+    // The width the map occupies is reserved by CSS keyed off these attributes, and the
+    // editor's two layers must narrow together, so a full render is the honest way to
+    // apply it rather than poking at one element.
+    document.body.dataset.docmap = DocMap.isEnabled() ? DocMap.currentStyle() : "";
+    renderAll({ keepAnchors: true });
+    Menu.refresh();
+  }
+});
+
+// Applied before the first render so a restored session does not flash the wrong width.
+document.body.dataset.docmap = DocMap.isEnabled() ? DocMap.currentStyle() : "";
 
 Menu.configure(Commands, {
   onUnavailable(command) {
@@ -2767,7 +2884,13 @@ function measureLayout() {
         : null,
       statusOnBottomEdge: status
         ? Math.abs((box(status).y + box(status).h) - window.innerHeight) <= 2 : null,
-      outlineFullHeight: aside && body ? Math.abs(box(aside).h - box(body).h) <= 2 : null,
+      // Null when the outline panel is hidden, rather than False. A hidden aside is a
+      // 0x0 box, so comparing its height to the body's reported a failure whenever the
+      // panel was simply turned off -- a verdict that cries wolf gets ignored, which is
+      // the same way three earlier assertions here stopped being read.
+      outlineFullHeight: aside && body && !aside.hidden && box(aside).h > 0
+        ? Math.abs(box(aside).h - box(body).h) <= 2
+        : null,
       // The checks that were missing: the previous verdict passed while the outline
       // sat entirely off the right-hand edge.
       outlineOnScreen: aside ? box(aside).x + box(aside).w <= window.innerWidth + 1 : null,

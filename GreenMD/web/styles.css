@@ -1296,3 +1296,71 @@ mark.find-current {
   border-bottom: 0;
   border-radius: 6px 6px 0 0;
 }
+
+/* ---------- document map ---------- */
+/*
+ * Overlaid on the scroller's right edge rather than placed in a flex row beside it,
+ * which leaves the pane's children exactly as they were.
+ *
+ * The width it occupies is reserved as padding, and for the editor that padding goes on
+ * the shared selector so both stacked layers narrow together. Putting it on one layer
+ * would move that layer's wrap column and drift the caret away from its glyphs, which
+ * is a bug this project has already paid for once.
+ */
+.docmap {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  width: 80px;
+  cursor: pointer;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+.docmap[hidden] { display: none; }
+.docmap[data-style="ribbon"] { width: 14px; }
+
+.docmap-canvas { display: block; width: 100%; }
+.docmap-canvas[hidden] { display: none; }
+
+.docmap-marks { position: absolute; inset: 0; pointer-events: none; }
+
+/* Markers keep the colours they carry everywhere else, so the map needs no legend. */
+.docmap-mark { position: absolute; left: 0; right: 0; min-height: 1px; }
+.docmap-mark-heading { background: var(--border-strong); }
+.docmap-mark-changed { background: var(--changed); }
+.docmap-mark-added   { background: var(--added); }
+.docmap-mark-find    { background: var(--accent); }
+
+/* The viewport window: an outline rather than a fill, so the shape stays readable
+   through it. */
+.docmap-viewport {
+  position: absolute;
+  left: 0;
+  right: 0;
+  min-height: 6px;
+  background: rgba(232, 230, 224, .10);
+  border-top: 1px solid rgba(232, 230, 224, .22);
+  border-bottom: 1px solid rgba(232, 230, 224, .22);
+  pointer-events: none;
+}
+.docmap-viewport[hidden] { display: none; }
+
+body.docmap-dragging, body.docmap-dragging * { cursor: grabbing !important; user-select: none; }
+
+/* Reserve the width, and take the native scrollbar away -- the map replaces it. */
+body[data-docmap="full"]   .doc { padding-right: 136px; }
+body[data-docmap="ribbon"] .doc { padding-right: 70px; }
+
+body[data-docmap] .doc { scrollbar-width: none; }
+body[data-docmap] .doc::-webkit-scrollbar { display: none; }
+
+body[data-docmap="full"]   .editor-highlight,
+body[data-docmap="full"]   .editor   { padding-right: 106px; }
+body[data-docmap="ribbon"] .editor-highlight,
+body[data-docmap="ribbon"] .editor   { padding-right: 40px; }
+
+body[data-docmap] .editor { scrollbar-width: none; }
+body[data-docmap] .editor::-webkit-scrollbar { display: none; }
