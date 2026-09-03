@@ -402,6 +402,32 @@ function openAsPeek(path) {
   post("open-file", path);
 }
 
+/**
+ * Recognises a double-click on a tab, tracked by path and not by DOM node.
+ *
+ * The dblclick event is unusable here. Clicking a tab re-renders the pane, so the
+ * element the first click landed on is gone by the time the second arrives, and the
+ * browser either withholds dblclick or reports it against an ancestor -- where a
+ * delegated handler looking for a tab finds nothing. The Files panel does not have this
+ * problem because marking a row only toggles classes and the row survives.
+ *
+ * Keyed on the pane as well as the path, so the same document open in two panes does
+ * not have a click in one count towards a double-click in the other.
+ */
+const TAB_DOUBLE_CLICK_MS = 400;
+let lastTabClick = { paneId: null, path: null, at: 0 };
+
+function noteTabClick(paneId, path) {
+  const now = Date.now();
+  const again = lastTabClick.paneId === paneId
+    && lastTabClick.path === path
+    && now - lastTabClick.at <= TAB_DOUBLE_CLICK_MS;
+
+  // Reset after a match, so a third click does not read as another double-click.
+  lastTabClick = again ? { paneId: null, path: null, at: 0 } : { paneId, path, at: now };
+  return again;
+}
+
 /** Makes the active tab permanent, if it was the ephemeral one. */
 function promoteActive(pane) {
   if (!pane || !pane.active) return;
@@ -1475,9 +1501,18 @@ panesEl.addEventListener("click", (event) => {
 
   const tab = event.target.closest("[data-path]");
   if (tab) {
+    const path = tab.dataset.path;
+    const again = noteTabClick(paneId, path);
+
     rememberAnchors();
     const pane = Layout.pane(paneId);
-    if (pane) { pane.active = tab.dataset.path; Layout.setActive(paneId); }
+    if (pane) { pane.active = path; Layout.setActive(paneId); }
+
+    // Promoted before the render, so the rebuilt strip already shows it as permanent.
+    if (again && Layout.promote(paneId, path)) {
+      statusTextEl.textContent = "Keeping " + tabDisplayName(path) + " open.";
+    }
+
     renderAll({ keepAnchors: false });
     return;
   }
@@ -1513,20 +1548,6 @@ panesEl.addEventListener("click", (event) => {
   if (href.startsWith("http://") || href.startsWith("https://")) {
     event.preventDefault();
     post("open-external", href);
-  }
-});
-
-// Double-clicking a tab commits it. The plain click that precedes the double-click has
-// already activated it, so this only has to change its standing.
-panesEl.addEventListener("dblclick", (event) => {
-  const tab = event.target.closest(".tab[data-path]");
-  const paneEl = event.target.closest(".pane");
-  if (!tab || !paneEl) return;
-
-  if (Layout.promote(paneEl.dataset.paneId, tab.dataset.path)) {
-    const pane = Layout.pane(paneEl.dataset.paneId);
-    if (pane) refreshPaneChrome(pane);
-    statusTextEl.textContent = "Keeping " + tabDisplayName(tab.dataset.path) + " open.";
   }
 });
 

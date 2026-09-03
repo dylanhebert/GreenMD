@@ -2411,10 +2411,35 @@ check("a committed tab is not replaced by the next browse",
 check("the ephemeral tab is still last, after the permanent one",
       paneOrder()[paneOrder().length - 1] === P_C, paneOrder().join(" | "));
 
-// Double-clicking the tab itself commits it too.
-tabFor(P_C).dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
-check("double-clicking the tab makes it permanent",
+// Double-clicking the tab itself commits it too. Driven as two ordinary clicks, which
+// is what a user does -- dispatching a synthetic dblclick is what let this ship broken.
+// Clicking a tab re-renders the pane, so the element the first click landed on no
+// longer exists when the second arrives, and the browser withholds dblclick or reports
+// it against an ancestor. A test that fires the event itself can only prove the handler
+// works, never that the event arrives. The tab is re-queried between clicks for the
+// same reason.
+tabFor(P_C).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+tabFor(P_C).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("two quick clicks on a tab make it permanent",
       !tabFor(P_C)?.classList.contains("peek"), tabFor(P_C)?.className);
+
+// Clicks on two different tabs must not add up to a double-click.
+browseOpen(P_D, "peek-d.md");
+check("the browse target is ephemeral to begin with",
+      tabFor(P_D)?.classList.contains("peek"), tabFor(P_D)?.className);
+tabFor(P_C).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+tabFor(P_D).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("clicks on different tabs do not count as a double-click",
+      tabFor(P_D)?.classList.contains("peek"), tabFor(P_D)?.className);
+
+// A third click must not read as a second double-click either.
+tabFor(P_D).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+tabFor(P_D).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("the pair promotes it", !tabFor(P_D)?.classList.contains("peek"));
+browseOpen(P_E, "peek-e.md");
+tabFor(P_E).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+check("a lone click after a promotion leaves the next tab ephemeral",
+      tabFor(P_E)?.classList.contains("peek"), tabFor(P_E)?.className);
 
 // Source mode is a declaration of intent.
 browseOpen(P_A, "peek-a.md");
