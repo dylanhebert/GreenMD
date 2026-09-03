@@ -574,7 +574,10 @@ function syncFileStates() {
     editing: editingPaths(),
     pinned: pinnedPaths(),
     dirty: open.filter(path => Editor.isPathDirty(path)),
-    changed: open.filter(path => changeMarksVisible && changeMarks.has(path))
+    // Both sources: block-level marks for documents being held, and the file-level
+    // fingerprint for everything else in the folder. A row shows a dot either way --
+    // "this moved" is the same news whether or not the file happens to be open.
+    changed: [...changedPaths()]
   });
 }
 
@@ -1346,6 +1349,10 @@ function dismissChangeMarks(path) {
 
   changeBaselines.set(path, doc.html);
   changeMarks.delete(path);
+  // One gesture, both kinds. Clearing the blocks while the file-level dot stayed put
+  // would leave the row still claiming there is something to look at.
+  markFileSeen(path);
+  saveSession();
 
   for (const pane of Layout.panesShowing(path)) {
     if (pane.active !== path) continue;
@@ -1403,6 +1410,75 @@ function changeChipText(marks) {
  * survives opening the tab and every re-render, and goes away only when the marks
  * are dismissed -- a reminder that there are changes not yet marked as seen.
  */
+// ---------- changes to files you have not opened ----------
+//
+// The block-level marks only exist for documents the app is holding, so a file rewritten
+// in a folder you have open but a tab you have not was invisible. This is the file-level
+// answer: a fingerprint of what the reader last saw, compared against what the folder
+// scan reports now.
+//
+// Size and modification time, not a content hash. Hashing would be exact, and it would
+// also mean reading every file in the folder -- which on a OneDrive folder means pulling
+// the whole thing down from the cloud, since reading a Files-On-Demand placeholder
+// triggers a download. The fingerprint comes out of the directory enumeration and opens
+// nothing. The cost is a false positive when sync rewrites a file with identical
+// content: the size matches but the timestamp moves, and the file shows as changed when
+// it is not. "Mark as seen" is the answer to that, and it is a better trade than an
+// application that quietly downloads a gigabyte to draw some dots.
+
+/** path -> the fingerprint the reader last marked as seen. Persisted. */
+let seenFiles = new Map();
+
+/** Paths whose fingerprint no longer matches what was last seen. */
+let changedOnDisk = new Set();
+
+function fingerprintOf(entry) {
+  if (!entry || entry.dir) return null;
+  return String(entry.size ?? "") + ":" + String(entry.mtime ?? "");
+}
+
+/**
+ * Compares every file in every open folder against what was last seen.
+ *
+ * A file with no stored fingerprint is recorded and treated as seen. That is the
+ * baseline decision: adding a folder is a fresh start, and fifty dots on day one would
+ * teach you to ignore the dot. Because the record is persisted, a file rewritten while
+ * the app was closed still shows -- it was seen in an earlier session.
+ */
+function reconcileSeenFiles() {
+  const before = changedOnDisk.size;
+  changedOnDisk = new Set();
+
+  let baselined = false;
+
+  for (const entry of Workspace.files()) {
+    const now = fingerprintOf(entry);
+    if (now === null) continue;
+
+    if (!seenFiles.has(entry.path)) { seenFiles.set(entry.path, now); baselined = true; continue; }
+    if (seenFiles.get(entry.path) !== now) changedOnDisk.add(entry.path);
+  }
+
+  if (baselined) saveSession();
+  if (before !== changedOnDisk.size) { syncFileStates(); refreshChangedChip(); }
+}
+
+/** Records a path's current state as seen, clearing its dot. */
+function markFileSeen(path) {
+  const entry = Workspace.files().find(candidate => candidate.path === path);
+  const now = fingerprintOf(entry);
+  if (now !== null) seenFiles.set(path, now);
+
+  changedOnDisk.delete(path);
+}
+
+/** Every path showing a change, from either source. */
+function changedPaths() {
+  const paths = new Set(changedOnDisk);
+  if (changeMarksVisible) for (const path of changeMarks.keys()) paths.add(path);
+  return paths;
+}
+
 // ---------- unsaved edits, shown in the rendered view ----------
 //
 // Switching out of source mode used to show the file as it is on disk, which is the one
@@ -1552,18 +1628,45 @@ function goToNextChanged() {
 }
 
 function markAllChangesSeen() {
+  // Both kinds: documents being held, and files in an open folder that moved without
+  // ever being opened. Scoped to open documents only, this command could not clear the
+  // dots it was most likely to be reached for.
   const paths = changedOpenPaths();
-  if (paths.length === 0) {
-    statusTextEl.textContent = "Nothing open has unseen changes.";
+  const files = [...changedOnDisk];
+
+  if (paths.length === 0 && files.length === 0) {
+    statusTextEl.textContent = "Nothing has unseen changes.";
     return;
   }
 
   for (const path of paths) dismissChangeMarks(path);
+  // And every file-level dot, which has no document to dismiss marks on.
+  for (const path of files) markFileSeen(path);
+  saveSession();
 
   refreshChangedDots();
   refreshChangeChips();
-  statusTextEl.textContent = "Marked " + paths.length
-    + (paths.length === 1 ? " document" : " documents") + " as seen.";
+
+  const total = new Set([...paths, ...files]).size;
+  statusTextEl.textContent = "Marked " + total
+    + (total === 1 ? " file" : " files") + " as seen.";
+}
+
+/** Everything under one folder, for the Files panel's own mark-as-seen. */
+function markFolderSeen(root) {
+  const under = Workspace.files()
+    .filter(entry => entry.root === root)
+    .map(entry => entry.path);
+
+  for (const path of under) {
+    if (changeMarks.has(path)) dismissChangeMarks(path);
+    markFileSeen(path);
+  }
+
+  saveSession();
+  refreshChangedDots();
+  refreshChangeChips();
+  statusTextEl.textContent = "Marked everything in this folder as seen.";
 }
 
 const changedChipEl = document.getElementById("changedChip");
@@ -2260,6 +2363,11 @@ function restoreSession(state) {
   if (Array.isArray(state.collapsedRoots)) Workspace.setCollapsedRoots(state.collapsedRoots);
   if (state.sectionWeights) Workspace.setSectionWeights(state.sectionWeights);
   if (typeof state.elsewhereHeight === "number") Workspace.setElsewhereSize(state.elsewhereHeight);
+  if (state.seenFiles && typeof state.seenFiles === "object") {
+    // Persisted so a file rewritten while the app was closed still reads as changed.
+    seenFiles = new Map(Object.entries(state.seenFiles));
+  }
+
   if (state.docMap && typeof state.docMap === "object") {
     DocMap.setEnabled(state.docMap.enabled === true);
     DocMap.setStyle(state.docMap.style);
@@ -2295,6 +2403,7 @@ function saveSession() {
       sectionWeights: Workspace.sectionWeights(),
       elsewhereHeight: Workspace.elsewhereSize(),
       docMap: { enabled: DocMap.isEnabled(), style: DocMap.currentStyle() },
+      seenFiles: Object.fromEntries(seenFiles),
       panels: Panels.snapshot(),
       recents,
       changeMarksVisible,
@@ -2315,6 +2424,10 @@ host.addEventListener("message", (event) => {
     case "workspace": {
       Workspace.set(payload);
       Panels.apply();
+
+      // Every scan carries fresh fingerprints, and a scan is exactly when a file that
+      // changed outside a tab becomes knowable.
+      reconcileSeenFiles();
 
       // The tree usually loads after the document, so the marker has to be set
       // here too rather than only when the active document changes.
@@ -2668,8 +2781,8 @@ window.Commands = (() => {
 
   define("markAllChangesSeen", "Mark all changes as seen", "",
     () => markAllChangesSeen(),
-    () => changedOpenPaths().length > 0,
-    "Nothing open has unseen changes.");
+    () => changedOpenPaths().length > 0 || changedOnDisk.size > 0,
+    "Nothing has unseen changes.");
 
   define("toggleChangeMarks", "Show or hide change marks", "",
     () => setChangeMarksVisible(!changeMarksVisible));
@@ -2900,6 +3013,26 @@ Workspace.configure({
   },
   onChanged() { saveSession(); },
   onCloseFolder(root) { post("close-workspace", root); },
+  onFolderMenu(event, root) {
+    closeTabContextMenu();
+
+    const under = Workspace.files().filter(entry => entry.root === root);
+    const unseen = under.filter(entry =>
+      changedOnDisk.has(entry.path) || changeMarks.has(entry.path)).length;
+
+    const menu = document.createElement("div");
+    menu.className = "context-menu";
+
+    menu.append(
+      contextItem("Mark folder as seen", {
+        unavailable: unseen ? null : "Nothing in this folder has unseen changes.",
+        run: () => markFolderSeen(root)
+      }),
+      contextItem("Close this folder", { run: () => post("close-workspace", root) })
+    );
+
+    placeContextMenu(menu, event);
+  },
   onAdoptFolder(root) {
     post("open-workspace", root);
     statusTextEl.textContent = "Added " + root + " to the sidebar.";

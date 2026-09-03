@@ -695,7 +695,13 @@ public partial class MainWindow : Window
                 path = entry.Path,
                 name = entry.Name,
                 parent = entry.Parent,
-                dir = entry.IsDirectory
+                dir = entry.IsDirectory,
+                // The fingerprint the UI compares against what it last marked as seen.
+                // Sent as a round-trip string rather than ticks: ticks exceed what a
+                // JavaScript number holds exactly, and a silently rounded timestamp
+                // would make a file look unchanged.
+                size = entry.Size,
+                mtime = entry.ModifiedUtc == default ? null : entry.ModifiedUtc.ToString("o")
             })
         })
     });

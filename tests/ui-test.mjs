@@ -2877,6 +2877,82 @@ send("preview-rendered", {
 check("a preview arriving for a clean buffer is ignored",
       !(vDoc().textContent || "").includes("EDITED"), vDoc().textContent);
 
+// --- changes to files nobody opened ---
+// Block-level marks only exist for documents the app is holding, so a file rewritten in
+// an open folder but not an open tab was invisible. This is the file-level answer: a
+// size-and-mtime fingerprint of what was last seen, against what the scan reports.
+const F_ROOT = "C:" + SEP + "watched";
+const F_ONE = F_ROOT + SEP + "one.md";
+const F_TWO = F_ROOT + SEP + "two.md";
+
+function folderScan(oneStamp, twoStamp) {
+  return { workspaces: [{
+    root: F_ROOT, name: "watched", truncated: false,
+    entries: [
+      { path: F_ONE, name: "one.md", parent: F_ROOT, dir: false,
+        size: 100, mtime: oneStamp },
+      { path: F_TWO, name: "two.md", parent: F_ROOT, dir: false,
+        size: 200, mtime: twoStamp }
+    ]
+  }] };
+}
+
+const rowOf = path => $$(".ws-section .tree-file").find(r => r.dataset.path === path);
+const rowChanged = path => !!rowOf(path)?.classList.contains("changed");
+
+send("workspace", folderScan("2026-09-01T10:00:00Z", "2026-09-01T10:00:00Z"));
+check("adding a folder marks nothing as changed",
+      !rowChanged(F_ONE) && !rowChanged(F_TWO),
+      "fifty dots on day one would teach you to ignore the dot");
+
+// One file moves on disk. Nothing is open, so there is no document to diff.
+send("workspace", folderScan("2026-09-02T11:00:00Z", "2026-09-01T10:00:00Z"));
+check("a file that changed outside a tab is marked", rowChanged(F_ONE),
+      rowOf(F_ONE)?.className);
+check("the file that did not change is left alone", !rowChanged(F_TWO),
+      rowOf(F_TWO)?.className);
+
+// A rescan reporting the same state must not clear it: the reader still has not looked.
+send("workspace", folderScan("2026-09-02T11:00:00Z", "2026-09-01T10:00:00Z"));
+check("a rescan does not quietly clear the dot", rowChanged(F_ONE));
+
+// Marking the folder seen sweeps it.
+window.eval("Commands.run('markAllChangesSeen')");
+check("mark all as seen clears a file-level dot too", !rowChanged(F_ONE),
+      rowOf(F_ONE)?.className);
+
+// And it stays clear across a rescan, because the fingerprint was recorded.
+send("workspace", folderScan("2026-09-02T11:00:00Z", "2026-09-01T10:00:00Z"));
+check("the new state is what counts as seen from now on", !rowChanged(F_ONE));
+
+// Right-clicking a folder header offers the same thing for one folder.
+send("workspace", folderScan("2026-09-03T12:00:00Z", "2026-09-03T12:00:00Z"));
+check("both files changed now", rowChanged(F_ONE) && rowChanged(F_TWO));
+
+const header = $$(".ws-section .ws-header").find(h => h.dataset.toggleRoot === F_ROOT);
+const folderMenuEvent = new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+header.dispatchEvent(folderMenuEvent);
+check("right-clicking a folder header opens a menu",
+      !!contextItemByLabel("Mark folder as seen"), folderMenuEvent.defaultPrevented);
+contextItemByLabel("Mark folder as seen")?.dispatchEvent(
+  new window.MouseEvent("click", { bubbles: true }));
+check("marking the folder seen clears every dot under it",
+      !rowChanged(F_ONE) && !rowChanged(F_TWO));
+
+// The record has to be session state, or a rewrite while the app was closed could never
+// be detected -- there would be nothing from the previous run to compare against.
+await new Promise(resolve => setTimeout(resolve, 600));
+const seenSession = posted.filter(m => m.type === "save-session").pop();
+const seenRecord = seenSession?.payload?.seenFiles || {};
+
+check("the seen record is carried in the session",
+      Object.prototype.hasOwnProperty.call(seenRecord, F_ONE)
+      && Object.prototype.hasOwnProperty.call(seenRecord, F_TWO),
+      Object.keys(seenRecord).length + " entries recorded");
+check("it records the fingerprint, not just the path",
+      String(seenRecord[F_ONE] || "").includes("2026-09-03"),
+      String(seenRecord[F_ONE]));
+
 // --- report ---
 console.log("");
 for (const r of results) {

@@ -83,6 +83,17 @@ window.Workspace = (() => {
       if (!row || row.dataset.dir) return;
       if (hooks.onOpenFilePermanent) hooks.onOpenFilePermanent(row.dataset.path);
     });
+
+    // Right-clicking a folder's header offers to clear every dot under it. Sweeping a
+    // whole folder is the gesture that suits coming back to one after a week away, and
+    // doing it file by file would not.
+    sectionsEl.addEventListener("contextmenu", event => {
+      const header = event.target.closest("[data-toggle-root]");
+      if (!header) return;
+
+      event.preventDefault();
+      if (hooks.onFolderMenu) hooks.onFolderMenu(event, header.dataset.toggleRoot);
+    });
     quickInputEl.addEventListener("input", () => { quickIndex = 0; renderQuick(); });
     quickInputEl.addEventListener("keydown", onQuickKey);
     quickListEl.addEventListener("click", onQuickClick);

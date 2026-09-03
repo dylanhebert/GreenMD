@@ -2,8 +2,22 @@ using System.IO;
 
 namespace GreenMD.Host;
 
-/// <summary>One node in a workspace's file tree. Flat, with a parent reference.</summary>
-public sealed record TreeEntry(string Path, string Name, string Parent, bool IsDirectory);
+/// <summary>
+/// One node in a workspace's file tree. Flat, with a parent reference.
+///
+/// Size and modification time ride along so the UI can tell whether a file it is not
+/// holding open has changed since the reader last looked. They come from the directory
+/// enumeration rather than from opening anything, which matters: reading a
+/// OneDrive Files-On-Demand placeholder triggers a download, so hashing every file in a
+/// synced folder to answer the same question would drag the whole folder off the cloud.
+/// </summary>
+public sealed record TreeEntry(
+    string Path,
+    string Name,
+    string Parent,
+    bool IsDirectory,
+    long Size = 0,
+    DateTime ModifiedUtc = default);
 
 public sealed record WorkspaceTree(
     string Root,
@@ -147,12 +161,15 @@ public sealed class WorkspaceService : IDisposable
         if (budget <= 0) return true;
 
         string[] subdirectories;
-        string[] files;
+        FileInfo[] files;
 
         try
         {
             subdirectories = Directory.GetDirectories(directory);
-            files = Directory.GetFiles(directory);
+            // FileInfo rather than paths: Length and LastWriteTimeUtc come back already
+            // populated from the directory enumeration, so the fingerprint costs nothing
+            // extra and nothing gets opened.
+            files = new DirectoryInfo(directory).GetFiles();
         }
         catch (UnauthorizedAccessException) { return false; }
         catch (IOException) { return false; }
@@ -182,10 +199,15 @@ public sealed class WorkspaceService : IDisposable
 
         foreach (var file in files)
         {
-            if (!MarkdownExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase)) continue;
+            if (!MarkdownExtensions.Contains(file.Extension, StringComparer.OrdinalIgnoreCase)) continue;
             if (budget <= 0) return true;
 
-            entries.Add(new TreeEntry(file, Path.GetFileName(file), parent, false));
+            long size;
+            DateTime modified;
+            try { size = file.Length; modified = file.LastWriteTimeUtc; }
+            catch (IOException) { size = 0; modified = default; }
+
+            entries.Add(new TreeEntry(file.FullName, file.Name, parent, false, size, modified));
             budget--;
         }
 
