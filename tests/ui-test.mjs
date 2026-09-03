@@ -2776,6 +2776,30 @@ check("showing them again restores both",
       && window.eval("Commands.get('nextChanged').available() === true"));
 window.eval("Commands.run('markAllChangesSeen')");
 
+// The map's change bands are read out of the document, so dismissing the marks has to
+// tell the map. The document itself was being repainted correctly -- the classes were
+// gone -- while the map went on describing the version that still had them, until
+// something unrelated forced a redraw. Switching documents and back "fixed" it, which
+// is the same symptom as two earlier bugs with the same cause.
+window.eval("Commands.run('toggleDocMap')");
+await nextFrame();
+
+const changeBands = () =>
+  $$(".pane .docmap-mark-changed, .pane .docmap-mark-added").length;
+
+tabFor(N_A)?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+send("doc-updated", navDoc(N_A, "nav-a.md", "rewritten for the band check"));
+await nextFrame();
+check("a change puts bands on the map", changeBands() > 0, changeBands() + " bands");
+
+key("m", { ctrlKey: true });
+await nextFrame();
+check("marking the changes seen clears the map's bands",
+      changeBands() === 0, changeBands() + " bands");
+
+window.eval("Commands.run('toggleDocMap')");
+await nextFrame();
+
 // --- report ---
 console.log("");
 for (const r of results) {

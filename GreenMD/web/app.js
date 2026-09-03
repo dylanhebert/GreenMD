@@ -1493,6 +1493,13 @@ function refreshChangedDots() {
   // open set unchanged this only re-toggles classes on rows that already exist.
   syncFileStates();
   refreshChangedChip();
+
+  // And the map, whose change bands are read out of the document. This is the one hook
+  // every caller that moves the marks already goes through -- dismissing one document,
+  // marking them all seen, and a live reload -- so it is the honest place for it rather
+  // than three call sites that can drift apart. Coalesced onto a frame, so the extra
+  // call on paths that already ask for a redraw costs nothing.
+  refreshAllDocMaps();
 }
 
 /** Updates every pane's chip in place, so a reload does not rebuild the header. */
