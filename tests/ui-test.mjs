@@ -3091,6 +3091,85 @@ check("a rewritten list item marks the item",
 check("and not the whole list",
       rPane().querySelectorAll("ul.changed-block").length === 0);
 
+// --- icons for newly created files ---
+// A file that appears in a folder scanned before is genuinely new; day one of a
+// folder still baselines silently. The badge clears when the file is opened.
+const F_NEW = F_ROOT + SEP + "report.md";
+const rowCreated = path => !!rowOf(path)?.classList.contains("created");
+
+function scanWith(extraEntries) {
+  const scan = folderScan("2026-09-07T08:00:00Z", "2026-09-07T08:00:00Z");
+  scan.workspaces[0].entries.push(...extraEntries);
+  return scan;
+}
+const newEntry = stamp =>
+  ({ path: F_NEW, name: "report.md", parent: F_ROOT, dir: false, size: 50, mtime: stamp });
+
+// Settle first: one known scan, swept clean, so this section owns its baseline
+// rather than inheriting whatever the sections above left in the record.
+send("workspace", folderScan("2026-09-07T08:00:00Z", "2026-09-07T08:00:00Z"));
+window.eval("Commands.run('markAllChangesSeen')");
+send("workspace", folderScan("2026-09-07T08:00:00Z", "2026-09-07T08:00:00Z"));
+check("settled: nothing is dotted before the new file arrives",
+      !rowChanged(F_ONE) && !rowChanged(F_TWO),
+      rowOf(F_ONE)?.className + " | " + rowOf(F_TWO)?.className);
+
+send("workspace", scanWith([newEntry("2026-09-06T10:00:00Z")]));
+check("a file born into a scanned folder gets the new badge",
+      rowCreated(F_NEW), rowOf(F_NEW)?.className);
+check("a new file is not also marked changed", !rowChanged(F_NEW));
+check("existing files are left alone", !rowCreated(F_ONE) && !rowChanged(F_ONE),
+      rowOf(F_ONE)?.className);
+
+// A rescan must not clear it: the reader still has not looked.
+send("workspace", scanWith([newEntry("2026-09-06T10:00:00Z")]));
+check("a rescan keeps the new badge", rowCreated(F_NEW));
+
+// A new file being rewritten is still one piece of news, not two.
+send("workspace", scanWith([newEntry("2026-09-06T11:00:00Z")]));
+check("a new file that keeps changing stays new rather than turning amber",
+      rowCreated(F_NEW) && !rowChanged(F_NEW), rowOf(F_NEW)?.className);
+
+// The app's own new file -- a Ctrl+N save -- is not news.
+const F_SELF = F_ROOT + SEP + "note-i-saved.md";
+send("file-written", F_SELF);
+send("workspace", scanWith([
+  newEntry("2026-09-06T11:00:00Z"),
+  { path: F_SELF, name: "note-i-saved.md", parent: F_ROOT, dir: false,
+    size: 10, mtime: "2026-09-06T11:30:00Z" }
+]));
+check("a new file the app itself wrote gets no badge",
+      !rowCreated(F_SELF) && !rowChanged(F_SELF), rowOf(F_SELF)?.className);
+
+// Opening the new file is the acknowledgement its badge was waiting for.
+send("doc-opened", {
+  path: F_NEW, title: "report.md", folder: F_ROOT,
+  html: '<h1 id="r">Report</h1><p>fresh</p>',
+  outline: [{ level: 1, text: "Report", id: "r" }],
+  missing: false, loadedAt: new Date().toISOString()
+});
+check("opening the file clears the badge", !rowCreated(F_NEW), rowOf(F_NEW)?.className);
+
+send("workspace", scanWith([newEntry("2026-09-06T11:00:00Z"),
+  { path: F_SELF, name: "note-i-saved.md", parent: F_ROOT, dir: false,
+    size: 10, mtime: "2026-09-06T11:30:00Z" }]));
+check("the opened file stays clear on the next scan", !rowCreated(F_NEW));
+
+// Once acknowledged, a later change is ordinary news again.
+send("workspace", scanWith([newEntry("2026-09-06T12:00:00Z"),
+  { path: F_SELF, name: "note-i-saved.md", parent: F_ROOT, dir: false,
+    size: 10, mtime: "2026-09-06T11:30:00Z" }]));
+check("a later change to the once-new file dots it amber",
+      rowChanged(F_NEW) && !rowCreated(F_NEW), rowOf(F_NEW)?.className);
+window.eval("Commands.run('markAllChangesSeen')");
+
+// The scanned-roots record rides with the session, so "new" survives a restart.
+await new Promise(r => setTimeout(r, 500));
+const sessionRoots = posted.filter(m => m.type === "save-session").pop()?.payload?.baselinedRoots;
+check("the session records which roots have been scanned",
+      Array.isArray(sessionRoots) && sessionRoots.includes(("C:" + SEP + "watched").toLowerCase()),
+      JSON.stringify(sessionRoots));
+
 // --- report ---
 console.log("");
 for (const r of results) {

@@ -731,6 +731,15 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
   background: var(--changed);
 }
 
+/* A file born after its folder was first scanned, not yet opened. Green: the
+   same "new" the change marks use for added blocks. */
+.tree-mark-created {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--added);
+}
+
 
 .tree-caret {
   width: 1.1em;

@@ -51,6 +51,7 @@ window.Workspace = (() => {
   /** Unsaved edits, and changes not yet marked as seen. Mirrors what the tabs show. */
   let dirtyFiles = new Set();
   let changedFiles = new Set();
+  let createdFiles = new Set();
 
   let hooks = {};
 
@@ -295,7 +296,7 @@ window.Workspace = (() => {
         const rowLabel = document.createElement("span");
         rowLabel.className = "tree-label";
         rowLabel.textContent = stripMd(baseNameOf(path));
-        row.append(rowLabel, rowMark("dirty", "●"), rowMark("changed", ""), rowMark("editing", "✎"), rowMark("pinned", "◆"));
+        row.append(rowLabel, rowMark("dirty", "●"), rowMark("changed", ""), rowMark("created", ""), rowMark("editing", "✎"), rowMark("pinned", "◆"));
 
         tree.append(row);
       }
@@ -419,7 +420,7 @@ window.Workspace = (() => {
       label.textContent = entry.dir ? entry.name : stripMd(entry.name);
       row.append(label);
 
-      if (!entry.dir) row.append(rowMark("dirty", "●"), rowMark("changed", ""), rowMark("editing", "✎"), rowMark("pinned", "◆"));
+      if (!entry.dir) row.append(rowMark("dirty", "●"), rowMark("changed", ""), rowMark("created", ""), rowMark("editing", "✎"), rowMark("pinned", "◆"));
 
       container.append(row);
 
@@ -606,6 +607,7 @@ window.Workspace = (() => {
       row.classList.toggle("pinned", pinnedFiles.has(path));
       row.classList.toggle("dirty", dirtyFiles.has(path));
       row.classList.toggle("changed", changedFiles.has(path));
+      row.classList.toggle("created", createdFiles.has(path));
 
       // Marks are real elements for the same reason the tab strip's are: .tree-label
       // truncates, so a marker painted at its trailing edge is clipped by exactly the
@@ -613,6 +615,7 @@ window.Workspace = (() => {
       // states, so they would have overwritten each other.
       setRowMark(row, "dirty", dirtyFiles.has(path));
       setRowMark(row, "changed", changedFiles.has(path));
+      setRowMark(row, "created", createdFiles.has(path));
       setRowMark(row, "editing", editingPaths.has(path));
       setRowMark(row, "pinned", pinnedFiles.has(path));
     }
@@ -634,6 +637,7 @@ window.Workspace = (() => {
     pinnedFiles = new Set(next.pinned || []);
     dirtyFiles = new Set(next.dirty || []);
     changedFiles = new Set(next.changed || []);
+    createdFiles = new Set(next.created || []);
 
     // The Elsewhere section is built from the open set, so it has to be rebuilt when
     // that set moves -- but only then. A render replaces every row in the panel, and

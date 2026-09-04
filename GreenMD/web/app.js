@@ -577,7 +577,8 @@ function syncFileStates() {
     // Both sources: block-level marks for documents being held, and the file-level
     // fingerprint for everything else in the folder. A row shows a dot either way --
     // "this moved" is the same news whether or not the file happens to be open.
-    changed: [...changedPaths()]
+    changed: [...changedPaths()],
+    created: [...newFiles]
   });
 }
 
@@ -1547,6 +1548,29 @@ const selfWritten = new Set();
 /** Paths whose fingerprint no longer matches what was last seen. */
 let changedOnDisk = new Set();
 
+/**
+ * Workspace roots that have completed a first scan. Persisted: a file appearing
+ * under one of these later is genuinely new, where day one of a folder baselines
+ * silently so that adding a big folder is not fifty badges at once.
+ */
+let baselinedRoots = new Set();
+
+/** Paths born into an already-scanned folder and not yet opened. Derived. */
+let newFiles = new Set();
+
+/** Case- and trailing-separator-insensitive key for a workspace root. */
+function rootKey(root) {
+  return String(root).toLowerCase().replace(/[\\/]+$/, "");
+}
+
+function rootOf(path) {
+  const lower = String(path).toLowerCase();
+  return Workspace.roots().find(root => {
+    const base = rootKey(root);
+    return lower.startsWith(base + "\\") || lower.startsWith(base + "/");
+  }) || null;
+}
+
 function fingerprintOf(entry) {
   if (!entry || entry.dir) return null;
   return String(entry.size ?? "") + ":" + String(entry.mtime ?? "");
@@ -1561,8 +1585,9 @@ function fingerprintOf(entry) {
  * the app was closed still shows -- it was seen in an earlier session.
  */
 function reconcileSeenFiles() {
-  const before = changedOnDisk.size;
+  const before = changedOnDisk.size + newFiles.size;
   changedOnDisk = new Set();
+  newFiles = new Set();
 
   let baselined = false;
 
@@ -1570,7 +1595,27 @@ function reconcileSeenFiles() {
     const now = fingerprintOf(entry);
     if (now === null) continue;
 
-    if (!seenFiles.has(entry.path)) { seenFiles.set(entry.path, now); baselined = true; continue; }
+    if (!seenFiles.has(entry.path)) {
+      // Our own write -- a Ctrl+N save landing in the tree -- is not news.
+      if (selfWritten.has(entry.path)) {
+        selfWritten.delete(entry.path);
+        seenFiles.set(entry.path, now);
+        baselined = true;
+        continue;
+      }
+
+      // Unknown file in a folder scanned before: genuinely new. It stays out of
+      // the seen record until opened, so the badge survives a restart for free.
+      const root = rootOf(entry.path);
+      if (root && baselinedRoots.has(rootKey(root))) {
+        newFiles.add(entry.path);
+        continue;
+      }
+
+      seenFiles.set(entry.path, now);
+      baselined = true;
+      continue;
+    }
     if (seenFiles.get(entry.path) === now) continue;
 
     // Our own write: record the new state as seen instead of reporting it.
@@ -1584,8 +1629,12 @@ function reconcileSeenFiles() {
     changedOnDisk.add(entry.path);
   }
 
+  for (const root of Workspace.roots()) {
+    if (!baselinedRoots.has(rootKey(root))) { baselinedRoots.add(rootKey(root)); baselined = true; }
+  }
+
   if (baselined) saveSession();
-  if (before !== changedOnDisk.size) { syncFileStates(); refreshChangedChip(); }
+  if (before !== changedOnDisk.size + newFiles.size) { syncFileStates(); refreshChangedChip(); }
 }
 
 /**
@@ -1601,13 +1650,14 @@ function prunedSeenBlocks() {
   return new Map([...seenBlocks].filter(([path]) => keep.has(path)));
 }
 
-/** Records a path's current state as seen, clearing its dot. */
+/** Records a path's current state as seen, clearing its dot and its new badge. */
 function markFileSeen(path) {
   const entry = Workspace.files().find(candidate => candidate.path === path);
   const now = fingerprintOf(entry);
   if (now !== null) seenFiles.set(path, now);
 
   changedOnDisk.delete(path);
+  newFiles.delete(path);
 }
 
 /** Every path showing a change, from either source. */
@@ -2506,6 +2556,10 @@ function restoreSession(state) {
       .filter(([, blocks]) => Array.isArray(blocks)));
   }
 
+  // Restored before the seen record: the reconcile it triggers needs to know which
+  // roots were already scanned, or every badge would read as day-one baseline.
+  if (Array.isArray(state.baselinedRoots)) baselinedRoots = new Set(state.baselinedRoots);
+
   if (state.seenFiles && typeof state.seenFiles === "object") {
     // Persisted so a file rewritten while the app was closed still reads as changed.
     seenFiles = new Map(Object.entries(state.seenFiles));
@@ -2554,6 +2608,7 @@ function saveSession() {
       docMap: { enabled: DocMap.isEnabled(), style: DocMap.currentStyle() },
       seenFiles: Object.fromEntries(seenFiles),
       seenBlocks: Object.fromEntries(prunedSeenBlocks()),
+      baselinedRoots: [...baselinedRoots],
       panels: Panels.snapshot(),
       recents,
       changeMarksVisible,
@@ -2737,6 +2792,14 @@ host.addEventListener("message", (event) => {
       docs.set(payload.path, payload);
       noteDocChanged(payload.path, payload.html);
       noteRecent(payload.path);
+
+      // Opening a new file is the acknowledgement its badge was waiting for.
+      if (newFiles.has(payload.path)) {
+        markFileSeen(payload.path);
+        syncFileStates();
+        saveSession();
+      }
+
       rememberAnchors();
 
       // Launching with a file, or double-clicking one while the app is running,
