@@ -145,7 +145,12 @@ of roughly 50 markdown files spread across 16 directories, nested 0 to 3 deep.
 - **Ctrl+P quick-open** fuzzy-filters the flattened path list. At that size this is the
   fastest way to reach a doc, and it is nearly free since the list already exists.
 - Enumeration is lazy per directory and never reads file contents.
-- Ignored during the walk: `.git`, `node_modules`, `bin`, `obj`, `.vs`, `dist`.
+- Ignored during the walk: `.git`, `node_modules`, `bin`, `obj`, `.vs`, `.idea`, `dist`,
+  `packages`. Only those, by name. A blanket "skip anything starting with a dot" rule
+  used to sit beside the list and hid `.claude/` and the like -- folders that are
+  exactly where agent tooling writes markdown -- while the watcher, which had no such
+  rule, still reported changes inside them. Empty-folder pruning already keeps a
+  dotfolder with no markdown out of the tree, so the list is enough.
 
 ### Watching a nested workspace
 

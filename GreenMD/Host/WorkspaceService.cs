@@ -194,7 +194,6 @@ public sealed class WorkspaceService : IDisposable
         {
             var name = Path.GetFileName(subdirectory);
             if (Ignored.Contains(name, StringComparer.OrdinalIgnoreCase)) continue;
-            if (name.StartsWith('.')) continue;
 
             var before = entries.Count;
             entries.Add(new TreeEntry(subdirectory, name, parent, true));
