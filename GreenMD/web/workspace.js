@@ -88,12 +88,32 @@ window.Workspace = (() => {
     // Right-clicking a folder's header offers to clear every dot under it. Sweeping a
     // whole folder is the gesture that suits coming back to one after a week away, and
     // doing it file by file would not.
+    //
+    // Every other row gets a menu too -- files, subfolders, and the Elsewhere groups --
+    // because the one thing all of them can offer is their path, and a path you can
+    // only get by opening the file and reading the header is a path you will retype.
     sectionsEl.addEventListener("contextmenu", event => {
       const header = event.target.closest("[data-toggle-root]");
-      if (!header) return;
+      if (header) {
+        event.preventDefault();
+        if (hooks.onFolderMenu) hooks.onFolderMenu(event, header.dataset.toggleRoot);
+        return;
+      }
 
-      event.preventDefault();
-      if (hooks.onFolderMenu) hooks.onFolderMenu(event, header.dataset.toggleRoot);
+      const row = event.target.closest("[data-path]");
+      if (row) {
+        event.preventDefault();
+        if (hooks.onEntryMenu) hooks.onEntryMenu(event, row.dataset.path, row.dataset.dir ? "dir" : "file");
+        return;
+      }
+
+      // An Elsewhere group names a folder no workspace tracks: its path is worth
+      // copying, but there is nothing under it to mark seen.
+      const group = event.target.closest("[data-folder]");
+      if (group) {
+        event.preventDefault();
+        if (hooks.onEntryMenu) hooks.onEntryMenu(event, group.dataset.folder, "folder");
+      }
     });
     quickInputEl.addEventListener("input", () => { quickIndex = 0; renderQuick(); });
     quickInputEl.addEventListener("keydown", onQuickKey);
@@ -214,6 +234,13 @@ window.Workspace = (() => {
       || candidate.startsWith(stem + BACKSLASH);
   }
 
+  /** The open folder this path lives under, or null when none does. */
+  function rootOf(path) {
+    if (!path || path.startsWith("untitled:")) return null;
+    const workspace = workspaces.find(w => underRoot(path, w.root));
+    return workspace ? workspace.root : null;
+  }
+
   function isElsewhere(path) {
     // An untitled note has no folder to be outside of yet.
     if (!path || path.startsWith("untitled:")) return false;
@@ -269,6 +296,7 @@ window.Workspace = (() => {
       const group = document.createElement("div");
       group.className = "elsewhere-group";
       group.title = parent;
+      group.dataset.folder = parent;
 
       const label = document.createElement("span");
       label.className = "elsewhere-group-name";
@@ -832,7 +860,7 @@ window.Workspace = (() => {
 
   return {
     configure, set, render, files,
-    roots, hasWorkspace, setVisible, isVisible,
+    roots, rootOf, isUnder: underRoot, hasWorkspace, setVisible, isVisible,
     expandedPaths, setExpanded,
     collapsedRoots, setCollapsedRoots,
     sectionWeights, setSectionWeights,

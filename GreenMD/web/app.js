@@ -733,6 +733,14 @@ function buildHeader(pane) {
 
   id.append(name, folder);
 
+  if (doc) {
+    id.addEventListener("contextmenu", event => {
+      event.preventDefault();
+      Layout.setActive(pane.id);
+      openHeaderContextMenu(event, pane);
+    });
+  }
+
   const meta = document.createElement("div");
   meta.className = "dochead-meta";
 
@@ -1840,11 +1848,19 @@ function markAllChangesSeen() {
     + (total === 1 ? " file" : " files") + " as seen.";
 }
 
+/** The tracked files under a folder -- a workspace root or any directory inside one. */
+function filesUnder(folder) {
+  return Workspace.files().filter(entry => Workspace.isUnder(entry.path, folder));
+}
+
+function unseenUnder(folder) {
+  return filesUnder(folder)
+    .filter(entry => changedOnDisk.has(entry.path) || changeMarks.has(entry.path)).length;
+}
+
 /** Everything under one folder, for the Files panel's own mark-as-seen. */
-function markFolderSeen(root) {
-  const under = Workspace.files()
-    .filter(entry => entry.root === root)
-    .map(entry => entry.path);
+function markFolderSeen(folder) {
+  const under = filesUnder(folder).map(entry => entry.path);
 
   for (const path of under) {
     if (changeMarks.has(path)) dismissChangeMarks(path);
@@ -2264,6 +2280,64 @@ function contextItem(label, { unavailable = null, run }) {
   return item;
 }
 
+function contextSeparator() {
+  const rule = document.createElement("div");
+  rule.className = "menu-separator";
+  return rule;
+}
+
+// ---------- copying paths ----------
+//
+// The path is the one thing every surface that names a document can hand over, and
+// the thing most often wanted from a viewer sitting next to an agent: "look at this
+// file" needs the file's path pasted somewhere else. Writing goes through the
+// clipboard API the code-block Copy buttons already use, so no new bridge message.
+
+const PATH_SEPARATOR = String.fromCharCode(92);
+
+async function copyToClipboard(text, what) {
+  try {
+    await navigator.clipboard.writeText(text);
+    statusTextEl.textContent = "Copied " + what + ": " + text;
+  } catch {
+    statusTextEl.textContent = "Could not copy the " + what + " to the clipboard.";
+  }
+}
+
+/** The path below its open folder, or null when no open folder holds it. */
+function relativePathOf(path) {
+  const root = Workspace.rootOf(path);
+  if (!root) return null;
+
+  let stem = root;
+  while (stem.length > 1 && (stem.endsWith("/") || stem.endsWith(PATH_SEPARATOR))) stem = stem.slice(0, -1);
+  if (path.length <= stem.length + 1) return null;      // the root itself
+  return path.slice(stem.length + 1);
+}
+
+/**
+ * "Copy path", plus "Copy relative path" when the thing sits inside an open folder.
+ * The relative form is the one that pastes into a prompt about a repo; the absolute one
+ * is for everything else. Both, always in this order, on every menu that offers them.
+ */
+function copyPathItems(path) {
+  const untitled = !path || path.startsWith(UNTITLED_PREFIX);
+  const items = [
+    contextItem("Copy path", {
+      unavailable: untitled ? "This note has not been saved yet, so it has no path." : null,
+      run: () => copyToClipboard(path, "path")
+    })
+  ];
+
+  const relative = untitled ? null : relativePathOf(path);
+  if (relative) {
+    items.push(contextItem("Copy relative path", {
+      run: () => copyToClipboard(relative, "relative path")
+    }));
+  }
+  return items;
+}
+
 function openTabContextMenu(event, paneId, path) {
   closeTabContextMenu();
 
@@ -2301,11 +2375,64 @@ function openTabContextMenu(event, paneId, path) {
     contextItem("Close all", {
       unavailable: closeable.length ? null : "Every tab in this pane is pinned.",
       run: () => { for (const open of closeable) requestCloseTab(paneId, open); }
-    })
+    }),
+    contextSeparator(),
+    ...copyPathItems(path)
   );
 
   // Placement and the menu-bar's hover-out grace period are shared with the discard
   // menu rather than written twice.
+  placeContextMenu(menu, event);
+}
+
+/**
+ * Right-clicking the document's name or folder in the header. The header already
+ * shows the path on hover; this is how you take it with you.
+ */
+function openHeaderContextMenu(event, pane) {
+  closeTabContextMenu();
+
+  const path = pane.active;
+  const doc = path ? docs.get(path) : null;
+  if (!doc) return;
+
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+
+  const folder = doc.folder || "";
+  menu.append(
+    ...copyPathItems(path),
+    contextItem("Copy folder path", {
+      unavailable: folder ? null : "This note has not been saved yet, so it has no folder.",
+      run: () => copyToClipboard(folder, "folder path")
+    })
+  );
+
+  placeContextMenu(menu, event);
+}
+
+/**
+ * A row in the Files panel: a file, a subfolder, or an Elsewhere group's folder.
+ * Folders the panel tracks get the same mark-as-seen the root header offers, scoped to
+ * what is under them; a folder no workspace covers only has its path to give.
+ */
+function openEntryContextMenu(event, path, kind) {
+  closeTabContextMenu();
+
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+
+  if (kind === "dir") {
+    menu.append(
+      contextItem("Mark folder as seen", {
+        unavailable: unseenUnder(path) ? null : "Nothing in this folder has unseen changes.",
+        run: () => markFolderSeen(path)
+      }),
+      contextSeparator()
+    );
+  }
+
+  menu.append(...copyPathItems(path));
   placeContextMenu(menu, event);
 }
 
@@ -3239,23 +3366,22 @@ Workspace.configure({
   onFolderMenu(event, root) {
     closeTabContextMenu();
 
-    const under = Workspace.files().filter(entry => entry.root === root);
-    const unseen = under.filter(entry =>
-      changedOnDisk.has(entry.path) || changeMarks.has(entry.path)).length;
-
     const menu = document.createElement("div");
     menu.className = "context-menu";
 
     menu.append(
       contextItem("Mark folder as seen", {
-        unavailable: unseen ? null : "Nothing in this folder has unseen changes.",
+        unavailable: unseenUnder(root) ? null : "Nothing in this folder has unseen changes.",
         run: () => markFolderSeen(root)
       }),
-      contextItem("Close this folder", { run: () => post("close-workspace", root) })
+      contextItem("Close this folder", { run: () => post("close-workspace", root) }),
+      contextSeparator(),
+      ...copyPathItems(root)
     );
 
     placeContextMenu(menu, event);
   },
+  onEntryMenu(event, path, kind) { openEntryContextMenu(event, path, kind); },
   onAdoptFolder(root) {
     post("open-workspace", root);
     statusTextEl.textContent = "Added " + root + " to the sidebar.";

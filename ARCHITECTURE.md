@@ -326,6 +326,21 @@ opened from outside every workspace lived in the tab strip and nowhere else: vis
 closed, then gone. Containment is tested with a trailing separator, so `C:\work-notes` is
 not treated as inside `C:\work`.
 
+### Copying paths
+
+Every surface that names a document offers **Copy path** on right-click: tabs, file and
+folder rows in the Files panel, the folder headers, the Elsewhere groups, and the
+document header. Inside an open folder it also offers **Copy relative path**, which is
+the form that pastes into a prompt about that repo. The header adds **Copy folder path**.
+
+One helper builds the items so every menu spells them the same way, and writing goes
+through the clipboard API the code-block Copy buttons already use rather than a new
+bridge message. The status bar repeats what was copied, because a silent copy leaves you
+pasting to find out.
+
+Giving subfolder rows a menu made **Mark folder as seen** reachable from them too, scoped
+by path containment rather than by workspace root.
+
 ### Document map
 
 A VS Code-style minimap in the right gutter, toggled in the View menu between the full

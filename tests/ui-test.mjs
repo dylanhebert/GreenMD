@@ -1377,9 +1377,9 @@ function rightClickTab(path) {
 const rightClick = rightClickTab(CTX_B);
 check("right-clicking a tab opens the context menu", !!$(".context-menu"));
 check("the native context menu is suppressed", rightClick.defaultPrevented);
-check("it offers pin, close, close others and close all",
+check("it offers pin, close, close others, close all and copy path",
       $$(".context-menu .menu-item").map(i => i.textContent).join("|")
-      === "Pin tab|Close|Close others|Close all",
+      === "Pin tab|Close|Close others|Close all|Copy path",
       $$(".context-menu .menu-item").map(i => i.textContent).join("|"));
 
 key("Escape");
@@ -3036,6 +3036,100 @@ check("the seen record is carried in the session",
 check("it records the fingerprint, not just the path",
       String(seenRecord[F_ONE] || "").includes("2026-09-03"),
       String(seenRecord[F_ONE]));
+
+// --- copy path ---
+// Every surface that names a document offers its path from the right-click menu. The
+// clipboard stub records what was written, so these assert the exact text and not just
+// that an item exists.
+const copied = [];
+window.navigator.clipboard.writeText = async text => { copied.push(text); };
+const lastCopied = () => copied[copied.length - 1];
+const clickItem = label => {
+  const item = contextItemByLabel(label);
+  item?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  return !!item;
+};
+const menuLabels = () => $$(".context-menu .menu-item").map(i => i.textContent).join("|");
+const rightClickEl = el => {
+  const event = new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  el.dispatchEvent(event);
+  return event;
+};
+const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+
+const F_SUB = F_ROOT + SEP + "api";
+const F_SUB_DOC = F_SUB + SEP + "readme.md";
+send("workspace", { workspaces: [{
+  root: F_ROOT, name: "watched", truncated: false,
+  entries: [
+    { path: F_ONE, name: "one.md", parent: F_ROOT, dir: false, size: 100, mtime: "2026-09-03T12:00:00Z" },
+    { path: F_TWO, name: "two.md", parent: F_ROOT, dir: false, size: 200, mtime: "2026-09-03T12:00:00Z" },
+    { path: F_SUB, name: "api", parent: F_ROOT, dir: true },
+    { path: F_SUB_DOC, name: "readme.md", parent: F_SUB, dir: false, size: 5, mtime: "2026-09-03T12:00:00Z" }
+  ]
+}] });
+
+const subRow = () => $$(".ws-section .tree-dir").find(r => r.dataset.path === F_SUB);
+check("the subfolder and its file are in the tree", !!subRow() && !!rowOf(F_SUB_DOC));
+
+// A file row.
+const fileMenuEvent = rightClickEl(rowOf(F_SUB_DOC));
+check("right-clicking a file row opens a menu with both path forms",
+      fileMenuEvent.defaultPrevented && menuLabels() === "Copy path|Copy relative path", menuLabels());
+clickItem("Copy path"); await settle();
+check("copy path writes the absolute path", lastCopied() === F_SUB_DOC, lastCopied());
+check("and says so in the status bar",
+      ($("#statusText").textContent || "").includes(F_SUB_DOC), $("#statusText").textContent);
+rightClickEl(rowOf(F_SUB_DOC)); clickItem("Copy relative path"); await settle();
+check("copy relative path is relative to the open folder",
+      lastCopied() === "api" + SEP + "readme.md", lastCopied());
+
+// A subfolder row.
+rightClickEl(subRow());
+check("a subfolder row offers mark-seen and both path forms",
+      menuLabels() === "Mark folder as seen|Copy path|Copy relative path", menuLabels());
+clickItem("Copy relative path"); await settle();
+check("a subfolder's relative path is its name under the root", lastCopied() === "api", lastCopied());
+
+// The root header: absolute only, since relative to itself is nothing.
+rightClickEl($$(".ws-section .ws-header").find(h => h.dataset.toggleRoot === F_ROOT));
+check("the root header offers copy path but no relative path",
+      menuLabels().endsWith("|Copy path") && !menuLabels().includes("relative"), menuLabels());
+clickItem("Copy path"); await settle();
+check("copying the root writes the root", lastCopied() === F_ROOT, lastCopied());
+
+// A tab, and the document header.
+send("doc-opened", { path: F_SUB_DOC, title: "readme.md", folder: F_SUB,
+  html: '<h1 id="a">Api</h1>', outline: [{ level: 1, text: "Api", id: "a" }],
+  missing: false, loadedAt: new Date().toISOString() });
+rightClickTab(F_SUB_DOC); clickItem("Copy relative path"); await settle();
+check("a tab offers the relative path too", lastCopied() === "api" + SEP + "readme.md", lastCopied());
+
+const headId = tabFor(F_SUB_DOC)?.closest(".pane")?.querySelector(".dochead-id");
+const headEvent = rightClickEl(headId);
+check("right-clicking the document header opens a path menu",
+      headEvent.defaultPrevented && menuLabels() === "Copy path|Copy relative path|Copy folder path",
+      menuLabels());
+clickItem("Copy folder path"); await settle();
+check("copy folder path writes the containing folder", lastCopied() === F_SUB, lastCopied());
+
+// Mark-seen from a subfolder row is scoped to that subfolder.
+send("workspace", { workspaces: [{
+  root: F_ROOT, name: "watched", truncated: false,
+  entries: [
+    { path: F_ONE, name: "one.md", parent: F_ROOT, dir: false, size: 100, mtime: "2026-09-04T12:00:00Z" },
+    { path: F_TWO, name: "two.md", parent: F_ROOT, dir: false, size: 200, mtime: "2026-09-03T12:00:00Z" },
+    { path: F_SUB, name: "api", parent: F_ROOT, dir: true },
+    { path: F_SUB_DOC, name: "readme.md", parent: F_SUB, dir: false, size: 5, mtime: "2026-09-04T12:00:00Z" }
+  ]
+}] });
+check("a change in the root and one in the subfolder both dot",
+      rowChanged(F_ONE) && rowChanged(F_SUB_DOC),
+      rowOf(F_ONE)?.className + " / " + rowOf(F_SUB_DOC)?.className);
+rightClickEl(subRow()); clickItem("Mark folder as seen");
+check("marking the subfolder seen clears its file", !rowChanged(F_SUB_DOC), rowOf(F_SUB_DOC)?.className);
+check("and leaves the root-level file dotted", rowChanged(F_ONE), rowOf(F_ONE)?.className);
+window.eval("Commands.run('markAllChangesSeen')");
 
 // --- block marks that survive a restart ---
 // The baseline used to be rendered HTML held in memory, so marks died with the process:
